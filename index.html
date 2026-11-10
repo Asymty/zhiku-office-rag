@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知库问答｜企业知识库 RAG</title>
+<style>
+:root { color-scheme: light; --ink: #182522; --muted: #546861; --line: #dce6e0; --accent: #145840; --soft: #eef5f0; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font: 15px/1.6 system-ui, "Microsoft YaHei", sans-serif; color: var(--ink); background: #f4f7f5; }
+.shell { max-width: 1250px; padding: 0 30px; margin: auto; }
+.masthead { background: #122b22; color: white; }
+.masthead .shell { min-height: 78px; display: flex; align-items: center; gap: 14px; }
+.mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: #d2e9d9; color: #122b22; font-weight: 750; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 21px; }
+.masthead p { color: #b7cfc1; font-size: 13px; }
+.account { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.login-panel { margin-top: 28px; max-width: 440px; }
+.audit-dialog { width: min(920px, calc(100% - 32px)); }
+.audit-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.audit-record { overflow-wrap: anywhere; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-top: 14px; }
+.metric-value { display: block; font-size: 22px; font-weight: 700; }
+.alert-badge { margin-left: 5px; color: #952e22; background: #ffe9de; border-radius: 12px; padding: 1px 7px; }
+.alert-section { margin: 14px 0; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+.alert-error { border-left: 3px solid #a4362e; }
+.alert-warning { border-left: 3px solid #bc7426; }
+.feedback { margin-top: 16px; }
+.feedback select { width: auto; max-width: 100%; }
+.workspace { display: grid; grid-template-columns: minmax(300px, 365px) minmax(0, 1fr); align-items: start; gap: 24px; padding-top: 30px; padding-bottom: 40px; }
+.panel { min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 25px #203c2c08; padding: 24px; }
+.panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
+h2 { font-size: 20px; }
+.muted, small { color: var(--muted); }
+.status { margin-top: 12px; font-size: 13px; color: var(--accent); }
+.status:empty { display: none; }
+button, textarea, input, select { font: inherit; }
+button { cursor: pointer; color: white; background: var(--accent); border: 1px solid transparent; border-radius: 8px; padding: 8px 14px; font-weight: 600; }
+button:disabled { cursor: wait; opacity: .6; }
+button.secondary { color: var(--accent); background: var(--soft); border-color: var(--line); }
+button.danger { color: #a4362e; background: #fff2f0; }
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid #287c60; outline-offset: 3px; }
+textarea, input:not([type=checkbox]), select { width: 100%; padding: 9px 11px; border: 1px solid #cbd9d0; border-radius: 8px; background: white; color: var(--ink); }
+textarea { min-height: 110px; resize: vertical; }
+.password-field { position: relative; display: block; }
+.password-field input { padding-right: 48px !important; }
+.password-toggle { position: absolute; inset: 2px 2px 2px auto; display: grid; place-items: center; padding: 0 11px; background: transparent; color: var(--accent); }
+.password-toggle svg { width: 19px; height: 19px; }
+.password-toggle .eye-slash { display: none; }
+.password-toggle[aria-pressed="true"] .eye-slash { display: inline; }
+.captcha-row { display: flex; align-items: stretch; gap: 8px; }
+.captcha-row input { min-width: 0; }
+.captcha-refresh { flex-shrink: 0; display: grid; place-items: center; min-width: 120px; min-height: 42px; padding: 2px; }
+.captcha-refresh img { width: 116px; height: 36px; }
+form { display: grid; gap: 12px; margin-top: 18px; }
+.form-label { display: grid; gap: 5px; font-weight: 600; }
+.toolbar, .doc-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.toolbar { justify-content: space-between; }
+.doc-list { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 10px; }
+.doc { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfb; }
+.doc-title { font-weight: 650; overflow-wrap: anywhere; }
+.doc-meta { display: block; margin: 3px 0 9px; }
+.doc-actions button { padding: 4px 8px; font-size: 13px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+.doc-actions a { font-size: 13px; }
+.empty { color: var(--muted); border: 1px dashed #cbd9d0; border-radius: 10px; padding: 16px; }
+.answer { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 17px; }
+.answer h3 { margin: 0 0 6px; font-size: 16px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 8px 0; }
+details.evidence { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+summary { cursor: pointer; overflow-wrap: anywhere; }
+dialog { width: min(520px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 16px; padding: 24px; color: var(--ink); }
+dialog::backdrop { background: #14282075; }
+@media (max-width: 790px) {
+  .shell { padding-left: 16px; padding-right: 16px; }
+  .workspace { grid-template-columns: 1fr; gap: 14px; padding-top: 16px; }
+  .panel { padding: 18px; }
+}
+</style>
+<header class="masthead">
+  <div class="shell"><span class="mark" aria-hidden="true">知</span><div><h1>知库问答</h1><p>文档管理与有据可查的问答</p></div>
+    <div class="account"><span id="account-name"></span><button type="button" id="open-monitoring" class="secondary" hidden>质量监控<span id="alert-badge" class="alert-badge" hidden></span></button><button type="button" id="open-evaluation" class="secondary" hidden>问答评估</button><button type="button" id="open-audit" class="secondary" hidden>审计日志</button><button type="button" id="manage-members" class="secondary" hidden>添加成员</button><button type="button" id="sign-out" class="secondary" hidden>退出</button></div>
+  </div>
+</header>
+<div class="shell">
+  <p id="session-status" class="status" role="status"></p>
+  <section id="local-entry" class="panel login-panel" aria-labelledby="local-entry-title" hidden>
+    <h2 id="local-entry-title">请从本地服务打开知库问答</h2>
+    <p class="muted">先启动项目，再通过下面的地址进入文档库。</p>
+    <a href="http://127.0.0.1:8010/">打开知库问答 · 127.0.0.1:8010</a>
+  </section>
+  <section id="login-panel" class="panel login-panel" aria-labelledby="login-title" hidden>
+    <h2 id="login-title">登录知识库</h2>
+    <form id="login">
+      <label class="form-label" for="username">用户名<input id="username" autocomplete="username" maxlength="64" required></label>
+      <label class="form-label" for="password">密码<input id="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <label class="form-label" for="captcha">验证码
+        <span class="captcha-row">
+          <input id="captcha" autocomplete="off" spellcheck="false" minlength="5" maxlength="5" required>
+          <button type="button" id="refresh-captcha" class="secondary captcha-refresh" aria-label="换一张验证码" title="点击换一张">
+            <span id="captcha-placeholder">换一张</span><img id="captcha-image" alt="五位图形验证码" hidden>
+          </button>
+        </span>
+      </label>
+      <div><button type="submit">登录</button></div>
+    </form>
+    <details style="margin-top:16px">
+      <summary>使用旧版访问令牌</summary>
+      <form id="token-login">
+        <label class="form-label" for="token">访问令牌<input id="token" type="password" autocomplete="off" maxlength="512" required></label>
+        <div><button type="submit" class="secondary">用令牌登录</button></div>
+      </form>
+    </details>
+  </section>
+</div>
+<main id="workspace" class="shell workspace" hidden>
+  <section class="panel" aria-labelledby="library-title">
+    <div class="panel-head"><h2 id="library-title">文档库</h2><button type="button" id="add-document">导入文档</button></div>
+    <p class="muted" id="document-count" aria-live="polite">正在读取文档…</p>
+    <p id="status" class="status" role="status"></p>
+    <ul id="document-list" class="doc-list"></ul>
+    <details id="ingestion-panel" class="evidence" hidden>
+      <summary id="ingestion-summary">入库任务</summary>
+      <p id="ingestion-status" class="status" role="status"></p>
+      <ul id="ingestion-list" class="doc-list"></ul>
+    </details>
+  </section>
+  <section class="panel" aria-labelledby="ask-title">
+    <h2 id="ask-title">知识库问答</h2>
+    <p class="muted">从所选知识库检索证据，并在回答中标出出处。</p>
+    <form id="ask">
+      <label class="form-label" for="question">你的问题
+        <textarea id="question" required maxlength="2000" rows="3" placeholder="例如，跨市住宿报销每晚上限是多少？"></textarea>
+      </label>
+      <details>
+        <summary>检索设置</summary>
+        <label class="form-label" for="query-namespace">知识库<select id="query-namespace"></select></label>
+        <label class="form-label" for="query-strategy">查询增强
+          <select id="query-strategy">
+            <option value="none">直接检索</option><option value="rewrite">改写</option><option value="expand">扩展</option>
+            <option value="decompose">拆解</option><option value="hyde">HyDE</option>
+          </select>
+        </label>
+        <label><input id="rerank" type="checkbox"> 启用重排（需配置重排服务）</label>
+      </details>
+      <div class="toolbar"><button type="submit">检索并回答</button><p id="pending" class="status" role="status"></p></div>
+    </form>
+    <div class="answer">
+      <h3>回答</h3><p id="answer-placeholder" class="muted">提交问题后，回答和引用会显示在这里。</p>
+      <pre id="answer" aria-live="polite"></pre>
+      <section id="sources" aria-label="回答来源"></section>
+      <div id="feedback" class="feedback" hidden>
+        <div class="doc-actions">
+          <button type="button" id="feedback-yes" class="secondary">有用</button>
+          <button type="button" id="feedback-no" class="secondary">没用</button>
+          <select id="feedback-reason" aria-label="没用的原因（可选）">
+            <option value="">没用的原因（可选）</option><option value="wrong_answer">答案有误</option>
+            <option value="wrong_source">引用不相关</option><option value="insufficient_detail">信息不够</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+        <p id="feedback-status" class="status" role="status"></p>
+      </div>
+    </div>
+  </section>
+</main>
+<dialog id="upload-dialog" aria-labelledby="upload-title">
+  <div class="panel-head"><h2 id="upload-title">导入文档</h2><button type="button" class="secondary" id="close-upload">关闭</button></div>
+  <p class="muted" id="upload-description"></p>
+  <form id="upload">
+    <label class="form-label" for="file">选择文件
+      <input id="file" type="file" accept=".pdf,.docx,.xlsx,.pptx,.html,.htm,.md,.markdown,.txt" required>
+    </label>
+    <label class="form-label" for="upload-namespace">知识库<select id="upload-namespace"></select></label>
+    <label class="form-label" for="chunk-strategy">分块策略
+      <select id="chunk-strategy">
+        <option value="hierarchical">层级分块</option><option value="fixed">固定长度</option><option value="semantic">语义分块</option>
+      </select>
+    </label>
+    <label class="form-label" for="department">所属部门（可选）<input id="department" maxlength="100"></label>
+    <label class="form-label" for="source">来源（可选）<input id="source" maxlength="1000"></label>
+    <div class="toolbar"><button type="submit" id="upload-submit">保存并入库</button></div>
+    <p id="upload-status" class="status" role="status"></p>
+  </form>
+</dialog>
+<dialog id="monitoring-dialog" class="audit-dialog" aria-labelledby="monitoring-title">
+  <div class="panel-head"><h2 id="monitoring-title">问答质量监控</h2><button type="button" class="secondary" id="close-monitoring">关闭</button></div>
+  <p class="muted">统计本租户的实际问答。完成的请求按事实校验结果分类，耗时从检索开始计至答案校验结束。</p>
+  <section class="alert-section" aria-labelledby="alerts-title">
+    <h3 id="alerts-title">运行告警</h3>
+    <p id="alerts-status" class="muted" role="status"></p>
+    <ul id="alert-list" class="doc-list"></ul>
+  </section>
+  <form id="monitoring-form">
+    <label class="form-label">时间范围<select id="monitoring-days"><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
+    <div><button type="submit">刷新统计</button></div>
+  </form>
+  <p id="monitoring-status" class="status" role="status"></p>
+  <div id="monitoring-grid" class="metric-grid"></div>
+  <p id="monitoring-reasons" class="muted"></p>
+</dialog>
+<dialog id="evaluation-dialog" class="audit-dialog" aria-labelledby="evaluation-title">
+  <div class="panel-head"><h2 id="evaluation-title">问答基准评估</h2><button type="button" class="secondary" id="close-evaluation">关闭</button></div>
+  <p class="muted">使用项目自带的虚构样本，在临时库里测试 BM25 检索、魔搭回答和引用。每道有证据的题最多调用两次模型。</p>
+  <form id="evaluation-form">
+    <label><input id="evaluation-ocr" type="checkbox"> 包含扫描 PDF（需要配置 OCR）</label>
+    <div class="doc-actions"><button type="submit" id="run-evaluation">运行魔搭评估</button>
+      <button type="button" id="resume-evaluation" class="secondary" hidden>从受限题继续</button>
+    </div>
+  </form>
+  <p id="evaluation-status" class="status" role="status"></p>
+  <ul id="evaluation-list" class="doc-list"></ul>
+</dialog>
+<dialog id="audit-dialog" class="audit-dialog" aria-labelledby="audit-title">
+  <div class="panel-head"><h2 id="audit-title">审计日志</h2><button type="button" class="secondary" id="close-audit">关闭</button></div>
+  <p class="muted">显示当前租户最近 50 条匹配记录。日志只保存操作和引用信息。</p>
+  <form id="audit-filters">
+    <div class="audit-filters">
+      <label class="form-label">账号<input id="audit-actor" maxlength="64" placeholder="全部账号"></label>
+      <label class="form-label">操作<select id="audit-action"><option value="">全部操作</option><option value="ingest">导入</option><option value="update">更新</option><option value="offline">下线</option><option value="question">问答</option><option value="retrieve">检索</option></select></label>
+      <label class="form-label">反馈<select id="audit-feedback"><option value="">全部反馈</option><option value="helpful">有用</option><option value="unhelpful">没用</option></select></label>
+      <label class="form-label">开始时间<input id="audit-after" type="datetime-local"></label>
+      <label class="form-label">结束时间<input id="audit-before" type="datetime-local"></label>
+    </div>
+    <div><button type="submit">查询日志</button></div>
+  </form>
+  <p id="audit-status" class="status" role="status"></p>
+  <ul id="audit-list" class="doc-list"></ul>
+</dialog>
+<dialog id="member-dialog" aria-labelledby="member-title">
+  <div class="panel-head"><h2 id="member-title">添加成员</h2><button type="button" class="secondary" id="close-member">关闭</button></div>
+  <p class="muted">成员创建后可用用户名和密码登录当前租户。</p>
+  <form id="add-member">
+    <label class="form-label" for="member-name">用户名<input id="member-name" pattern="[a-zA-Z0-9_\-]{1,64}" maxlength="64" required></label>
+    <label class="form-label" for="member-password">初始密码<input id="member-password" type="password" autocomplete="new-password" minlength="6" maxlength="128" required><small>至少 6 个字符</small></label>
+    <label class="form-label" for="member-role">角色<select id="member-role"><option value="reader">只读成员</option><option value="editor">编辑成员</option></select></label>
+    <label class="form-label" for="member-namespace">知识库<select id="member-namespace"></select></label>
+    <div><button type="submit">创建账号</button></div>
+    <p id="member-status" class="status" role="status"></p>
+  </form>
+</dialog>
+<script>
+const byId = id => document.getElementById(id);
+let editing = null;
+let session;
+let alertTimer;
+let jobTimer;
+let jobStates = new Map();
+let captchaId = "";
+for (const id of ["password", "member-password", "token"]) {
+  const input = byId(id);
+  const field = document.createElement("span");
+  field.className = "password-field";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "password-toggle";
+  toggle.setAttribute("aria-controls", id);
+  toggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/><path class="eye-slash" d="M4 4l16 16"/></svg>';
+  function show(visible) {
+    input.type = visible ? "text" : "password";
+    toggle.setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
+    toggle.setAttribute("aria-pressed", String(visible));
+  }
+  show(false);
+  toggle.addEventListener("click", () => show(input.type === "password"));
+  input.form.addEventListener("reset", () => show(false));
+  input.closest("dialog")?.addEventListener("close", () => show(false));
+  input.replaceWith(field);
+  field.append(input, toggle);
+}
+async function send(path, body, method = "POST") {
+  const response = await fetch(path, {method, headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (response.status === 204) return;
+  const data = await response.json();
+  if (!response.ok) throw Object.assign(
+    new Error(typeof data.detail === "string" ? data.detail : "请检查输入。"), {status: response.status}
+  );
+  return data;
+}
+async function start() {
+  if (location.protocol === "file:") {
+    byId("local-entry").hidden = false;
+    return;
+  }
+  try {
+    session = await send("/session", undefined, "GET");
+  } catch (error) {
+    byId("login-panel").hidden = error.status !== 401;
+    byId("session-status").textContent = error.status === 401 ? "" :
+      error.status === 404 ? "当前服务没有登录接口。请重启项目服务后刷新页面。" :
+      !error.status ? "无法连接本地服务。请检查项目是否已启动，再刷新页面。" : error.message;
+    if (error.status === 401) await refreshCaptcha();
+    return;
+  }
+  byId("login-panel").hidden = true;
+  byId("session-status").textContent = "";
+  byId("workspace").hidden = false;
+  byId("account-name").textContent = session.authentication ? `${session.name} · ${session.tenant}` : session.name;
+  byId("sign-out").hidden = !session.authentication;
+  byId("manage-members").hidden = !session.manage_members;
+  byId("open-audit").hidden = !session.authentication || session.role !== "admin";
+  byId("open-monitoring").hidden = !session.authentication || session.role !== "admin";
+  clearInterval(alertTimer);
+  if (!byId("open-monitoring").hidden) {
+    refreshAlerts();
+    alertTimer = setInterval(refreshAlerts, 60000);
+  }
+  byId("open-evaluation").hidden = !session.authentication || session.role !== "admin";
+  byId("add-document").hidden = session.role === "reader";
+  for (const id of ["query-namespace", "upload-namespace", "member-namespace"]) {
+    byId(id).replaceChildren(...session.namespaces.map(name => new Option(name, name)));
+  }
+  await refreshDocuments().catch(error => {
+    byId("document-count").textContent = "读取文档失败";
+    byId("status").textContent = error.message;
+  });
+  refreshJobs();
+}
+async function refreshCaptcha() {
+  const refresh = byId("refresh-captcha");
+  refresh.disabled = true;
+  captchaId = "";
+  byId("captcha").value = "";
+  try {
+    const challenge = await send("/session/captcha", undefined, "GET");
+    captchaId = challenge.id;
+    byId("captcha-image").src = challenge.image;
+    byId("captcha-image").hidden = false;
+    byId("captcha-placeholder").hidden = true;
+  } catch (error) {
+    byId("captcha-image").hidden = true;
+    byId("captcha-placeholder").hidden = false;
+    byId("session-status").textContent = error.status === 404
+      ? "当前服务还没有验证码接口。请重启项目服务后刷新页面。"
+      : "验证码加载失败，请点击换一张。";
+  } finally {
+    refresh.disabled = false;
+  }
+}
+byId("refresh-captcha").addEventListener("click", refreshCaptcha);
+async function login(event, openSession) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await openSession();
+    event.target.reset();
+    await start();
+  } catch (error) {
+    byId("session-status").textContent = error.message;
+    if (event.target.id === "login") await refreshCaptcha();
+  } finally {
+    button.disabled = false;
+  }
+}
+byId("login").addEventListener("submit", event => login(event, () => {
+  if (!captchaId) throw new Error("请先加载验证码。");
+  return send("/session", {
+    name: byId("username").value.trim(), password: byId("password").value,
+    captcha_id: captchaId, captcha: byId("captcha").value.trim()
+  });
+}));
+byId("token-login").addEventListener("submit", event => login(event, async () => {
+  const response = await fetch("/session", {method: "POST",
+    headers: {Authorization: `Bearer ${byId("token").value.trim()}`}});
+  if (!response.ok) throw new Error((await response.json()).detail || "登录失败。");
+}));
+byId("sign-out").addEventListener("click", async () => {
+  try {
+    await send("/session", undefined, "DELETE");
+    location.reload();
+  } catch (error) {
+    byId("session-status").textContent = error.message;
+  }
+});
+async function refreshDocuments() {
+  const documents = await send("/documents", undefined, "GET");
+  const active = documents.filter(item => item.active);
+  const list = byId("document-list");
+  list.replaceChildren();
+  byId("document-count").textContent = `${active.length} 份已入库文档`;
+  if (!active.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "暂无文档。导入 PDF、Word、Excel、PPT、HTML、Markdown 或 TXT 后即可提问。";
+    list.append(empty);
+  }
+  for (const item of active) {
+    const card = document.createElement("li");
+    card.className = "doc";
+    const title = document.createElement("div");
+    title.className = "doc-title";
+    title.textContent = item.name;
+    const meta = document.createElement("small");
+    meta.className = "doc-meta";
+    const index = item.indexed_chunks ? `${item.indexed_chunks} 个片段` : "当前检索模式需重新入库";
+    meta.textContent = [item.document_type?.toUpperCase(), `版本 ${item.version}`, index,
+      item.department, item.namespace === "default" ? "" : item.namespace].filter(Boolean).join(" · ");
+    const actions = document.createElement("div");
+    actions.className = "doc-actions";
+    if (item.has_original) {
+      const original = document.createElement("a");
+      original.href = `/documents/${encodeURIComponent(item.id)}/versions/${item.version}/original`;
+      original.target = "_blank";
+      original.rel = "noopener";
+      original.textContent = item.document_type === "pdf" ? "打开原件" : "下载原件";
+      actions.append(original);
+    }
+    const update = document.createElement("button");
+    update.type = "button";
+    update.className = "secondary";
+    update.textContent = "更新";
+    update.addEventListener("click", () => openUpload(item));
+    const offline = document.createElement("button");
+    offline.type = "button";
+    offline.className = "danger";
+    offline.textContent = "下线";
+    offline.addEventListener("click", () => takeOffline(item, offline));
+    if (session.role !== "reader") actions.append(update, offline);
+    card.append(title, meta, actions);
+    list.append(card);
+  }
+}
+const jobStages = {queued: "排队中", parsing: "解析文档／OCR", indexing: "分块与索引", saving: "正在保存"};
+const jobActive = status => status === "queued" || status === "running";
+async function refreshJobs() {
+  clearTimeout(jobTimer);
+  try {
+    const jobs = await send("/jobs/files", undefined, "GET");
+    const panel = byId("ingestion-panel");
+    const list = byId("ingestion-list");
+    const active = jobs.filter(job => jobActive(job.status)).length;
+    panel.hidden = !jobs.length;
+    if (active) panel.open = true;
+    byId("ingestion-summary").textContent = active ? `入库任务 · ${active} 项处理中` : "入库任务";
+    byId("ingestion-status").textContent = "";
+    list.replaceChildren();
+    for (const job of jobs) {
+      const item = document.createElement("li");
+      item.className = "doc";
+      const name = document.createElement("div");
+      name.className = "doc-title";
+      name.textContent = job.name;
+      const status = document.createElement("small");
+      status.textContent = job.status === "completed" ?
+        `已入库 · 版本 ${job.result.version} · ${job.result.chunks} 个片段` :
+        job.status === "failed" ? `失败 · ${job.error}` : jobStages[job.stage];
+      item.append(name, status);
+      list.append(item);
+    }
+    const changed = jobs.some(job => job.status === "completed" && jobActive(jobStates.get(job.id)));
+    jobStates = new Map(jobs.map(job => [job.id, job.status]));
+    if (changed) await refreshDocuments();
+  } catch (error) {
+    byId("ingestion-panel").hidden = false;
+    byId("ingestion-status").textContent = error.message;
+  } finally {
+    if ([...jobStates.values()].some(jobActive)) jobTimer = setTimeout(refreshJobs, 1500);
+  }
+}
+function openUpload(item = null) {
+  editing = item;
+  byId("upload").reset();
+  byId("department").value = item?.department || "";
+  byId("source").value = item?.source || "";
+  const namespace = byId("upload-namespace");
+  namespace.replaceChildren(...(item ? [item.namespace] : session.namespaces).map(name => new Option(name, name)));
+  namespace.disabled = Boolean(item);
+  byId("upload-title").textContent = item ? "更新文档" : "导入文档";
+  byId("upload-description").textContent = item ? `为「${item.name}」选择文件。更新成功后，旧版会退出检索。` :
+    "支持 PDF、Word、Excel、PPT、HTML、Markdown 和 TXT，单文件不超过 20 MB。";
+  byId("upload-status").textContent = "";
+  byId("upload-dialog").showModal();
+}
+byId("add-document").addEventListener("click", () => openUpload());
+byId("close-upload").addEventListener("click", () => byId("upload-dialog").close());
+byId("upload-dialog").addEventListener("cancel", event => {
+  if (byId("upload-submit").disabled) event.preventDefault();
+});
+async function takeOffline(item, button) {
+  if (!window.confirm(`下线「${item.name}」？下线后会移除原文件及检索索引。`)) return;
+  button.disabled = true;
+  try {
+    await send(`/documents/${encodeURIComponent(item.id)}`, undefined, "DELETE");
+    await refreshDocuments();
+    byId("status").textContent = "文档已下线。";
+  } catch (error) {
+    button.disabled = false;
+    byId("status").textContent = error.message;
+  }
+}
+start();
+function submit(formId, statusId, working, run) {
+  byId(formId).addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    if (formId === "upload") byId("close-upload").disabled = true;
+    byId(statusId).textContent = working;
+    try { byId(statusId).textContent = await run(); }
+    catch (error) { byId(statusId).textContent = error.message; }
+    finally {
+      button.disabled = false;
+      if (formId === "upload") byId("close-upload").disabled = false;
+    }
+  });
+}
+const feedbackReasons = {wrong_answer: "答案有误", wrong_source: "引用不相关",
+  insufficient_detail: "信息不够", other: "其他"};
+const alertNames = {document_parse: "文档解析失败", database_busy: "数据库忙或锁超时",
+  model_error: "模型调用异常", rate_limit: "模型调用受限（429）", verification_spike: "事实校验未通过比例偏高",
+  sensitive_content: "敏感词规则拦截"};
+async function refreshAlerts() {
+  const badge = byId("alert-badge");
+  const list = byId("alert-list");
+  const status = byId("alerts-status");
+  try {
+    const report = await send("/alerts", undefined, "GET");
+    badge.hidden = !report.alerts.length;
+    badge.textContent = report.alerts.length ? `${report.alerts.length} 项告警` : "";
+    list.replaceChildren();
+    for (const alert of report.alerts) {
+      const item = document.createElement("li");
+      item.className = `doc alert-${alert.level}`;
+      const title = document.createElement("div");
+      title.className = "doc-title";
+      title.textContent = alertNames[alert.code] || alert.code;
+      const details = document.createElement("small");
+      details.textContent = alert.sample_count
+        ? `${alert.count}/${alert.sample_count} 次校验未通过（${Math.round(alert.rate * 100)}%），阈值 ${Math.round(alert.threshold * 100)}%`
+        : `${alert.count} 次，触发阈值 ${alert.threshold} 次`;
+      item.append(title, details);
+      list.append(item);
+    }
+    status.textContent = `最近 ${report.window_minutes} 分钟 · ${report.alerts.length ? `${report.alerts.length} 项告警` : "无告警"}`;
+  } catch {
+    badge.hidden = true;
+    list.replaceChildren();
+    status.textContent = "暂时无法读取告警，请检查服务状态。";
+  }
+}
+submit("monitoring-form", "monitoring-status", "正在统计…", async () => {
+  refreshAlerts();
+  const {metrics, feedback} = await send(`/monitoring?days=${byId("monitoring-days").value}`, undefined, "GET");
+  const grid = byId("monitoring-grid");
+  grid.replaceChildren();
+  const helpful = feedback.filter(item => item.helpful).reduce((total, item) => total + item.count, 0);
+  const unhelpful = feedback.filter(item => !item.helpful).reduce((total, item) => total + item.count, 0);
+  const duration = value => value == null ? "—" : `${value} ms`;
+  for (const [label, value] of [
+    ["问答请求", metrics.total], ["证据支持", metrics.supported], ["资料不足", metrics.no_evidence],
+    ["事实校验未通过", metrics.unsupported], ["引用无效", metrics.invalid_citation],
+    ["模型限流（429）", metrics.rate_limited], ["服务错误（5xx）", metrics.service_errors],
+    ["其他失败", metrics.other_errors], ["平均耗时", duration(metrics.mean_ms)],
+    ["P95 耗时", duration(metrics.p95_ms)], ["有用", helpful], ["没用", unhelpful]
+  ]) {
+    const card = document.createElement("div");
+    card.className = "doc";
+    const name = document.createElement("small");
+    name.textContent = label;
+    const number = document.createElement("strong");
+    number.className = "metric-value";
+    number.textContent = value;
+    card.append(name, number);
+    grid.append(card);
+  }
+  byId("monitoring-reasons").textContent = feedback.filter(item => !item.helpful)
+    .map(item => `${feedbackReasons[item.reason] || "未选原因"} ${item.count} 条`).join(" · ");
+  return metrics.total ? "" : "所选时段暂无问答记录。";
+});
+byId("open-monitoring").addEventListener("click", () => {
+  byId("monitoring-dialog").showModal();
+  byId("monitoring-form").requestSubmit();
+});
+byId("close-monitoring").addEventListener("click", () => byId("monitoring-dialog").close());
+let feedbackId = null;
+function showFeedback(id) {
+  feedbackId = id ?? null;
+  byId("feedback").hidden = !feedbackId;
+  byId("feedback-status").textContent = "";
+  byId("feedback-reason").value = "";
+  byId("feedback-yes").disabled = byId("feedback-no").disabled = false;
+}
+async function submitFeedback(helpful) {
+  const id = feedbackId;
+  if (!id) return;
+  byId("feedback-yes").disabled = byId("feedback-no").disabled = true;
+  try {
+    await send(`/questions/${id}/feedback`, {
+      helpful, reason: helpful ? null : byId("feedback-reason").value || null
+    }, "PUT");
+    if (id === feedbackId) byId("feedback-status").textContent = `已记录：${helpful ? "有用" : "没用"}。`;
+  } catch (error) {
+    if (id === feedbackId) byId("feedback-status").textContent = error.message;
+  } finally {
+    if (id === feedbackId) byId("feedback-yes").disabled = byId("feedback-no").disabled = false;
+  }
+}
+byId("feedback-yes").addEventListener("click", () => submitFeedback(true));
+byId("feedback-no").addEventListener("click", () => submitFeedback(false));
+const auditActions = {ingest: "导入", update: "更新", offline: "下线", question: "问答", retrieve: "检索"};
+const auditResults = {supported: "证据支持", no_evidence: "资料不足", unsupported: "事实校验未通过", invalid_citation: "引用无效"};
+async function loadAudit() {
+  const params = new URLSearchParams();
+  for (const field of ["actor", "action", "feedback", "after", "before"]) {
+    const value = byId(`audit-${field}`).value.trim();
+    if (value) params.set(field, field === "after" || field === "before" ? new Date(value).toISOString() : value);
+  }
+  const rows = await send(`/audit?${params}`, undefined, "GET");
+  const list = byId("audit-list");
+  list.replaceChildren();
+  for (const row of rows) {
+    const item = document.createElement("li");
+    item.className = "doc audit-record";
+    const title = document.createElement("div");
+    title.className = "doc-title";
+    title.textContent = `${auditActions[row.action]} · ${row.actor} · ${row.status < 400 ? "成功" : `失败 (${row.status})`}`;
+    const details = document.createElement("small");
+    const feedback = row.feedback_helpful == null ? "" : row.feedback_helpful ? "反馈：有用" :
+      `反馈：没用${row.feedback_reason ? "（" + feedbackReasons[row.feedback_reason] + "）" : ""}`;
+    details.textContent = [new Date(row.created_at).toLocaleString("zh-CN"), row.namespace,
+      row.document_name || row.document_id, row.version && `版本 ${row.version}`,
+      auditResults[row.verification], alertNames[row.failure_kind], feedback, `${row.duration_ms} ms`].filter(Boolean).join(" · ");
+    item.append(title, details);
+    for (const source of row.sources) {
+      const link = document.createElement("a");
+      link.className = "doc-meta";
+      link.textContent = `引用片段 ${source.chunk} · 版本 ${source.version} · ${source.document_id.slice(0, 10)}`;
+      link.href = `/documents/${encodeURIComponent(source.document_id)}/versions/${source.version}/chunks/${source.chunk}`;
+      link.target = "_blank";
+      link.rel = "noopener";
+      item.append(link);
+    }
+    list.append(item);
+  }
+  return rows.length ? `显示 ${rows.length} 条记录。` : "没有匹配的记录。";
+}
+submit("audit-filters", "audit-status", "正在读取日志…", loadAudit);
+byId("open-audit").addEventListener("click", () => {
+  byId("audit-dialog").showModal();
+  byId("audit-filters").requestSubmit();
+});
+byId("close-audit").addEventListener("click", () => byId("audit-dialog").close());
+byId("open-evaluation").addEventListener("click", () => {
+  if (!evaluationCaseIds.length) restoreEvaluation();
+  byId("evaluation-dialog").showModal();
+});
+byId("close-evaluation").addEventListener("click", () => byId("evaluation-dialog").close());
+let evaluationRows = [];
+let evaluationCaseIds = [];
+let evaluationRetryFrom = null;
+let evaluationRetryAt = 0;
+let evaluationIncludesOcr = false;
+function evaluationStorageKey() {
+  return `inkatlas-evaluation-v2:${session.tenant}:${session.name}`;
+}
+function restoreEvaluation() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(evaluationStorageKey()));
+    if (!saved || !Array.isArray(saved.caseIds) || !Array.isArray(saved.rows)) return;
+    evaluationRows = saved.rows;
+    evaluationCaseIds = saved.caseIds;
+    evaluationRetryFrom = saved.retryFrom;
+    evaluationRetryAt = saved.retryAt;
+    evaluationIncludesOcr = saved.includeOcr;
+    byId("evaluation-ocr").checked = evaluationIncludesOcr;
+    showEvaluationProgress();
+  } catch {
+    // The evaluation still works when browser storage is unavailable.
+  }
+}
+function renderEvaluation(rows) {
+  const list = byId("evaluation-list");
+  list.replaceChildren();
+  for (const row of rows) {
+    const item = document.createElement("li");
+    item.className = "doc audit-record";
+    const title = document.createElement("div");
+    title.className = "doc-title";
+    const status = row.answer_error_status === 429 ? "调用受限，未评分" :
+      row.answer_error_status ? "调用失败，未评分" : row.answer_pass ? "通过" : "未通过";
+    title.textContent = `${status} · ${row.question}`;
+    const answer = document.createElement("pre");
+    answer.textContent = row.answer ?? `模型调用失败（${row.answer_error_status}）`;
+    const details = document.createElement("small");
+    const retrieval = row.first_hit_rank ? `正确证据排名第 ${row.first_hit_rank}` :
+      row.empty_retrieval ? "空检索" : "未命中标注证据";
+    const cited = (row.cited || []).map(source => `${source.name} · ${source.location || `片段 ${source.chunk}`}`);
+    details.textContent = [retrieval, auditResults[row.verification], ...cited].filter(Boolean).join(" · ");
+    item.append(title, answer, details);
+    list.append(item);
+  }
+}
+function showEvaluationProgress() {
+  renderEvaluation(evaluationRows);
+  const passed = evaluationRows.filter(row => row.answer_pass === true).length;
+  const scored = evaluationRows.filter(row => typeof row.answer_pass === "boolean").length;
+  const attempted = new Set(evaluationRows.map(row => row.id));
+  const pending = evaluationCaseIds.filter(id => !attempted.has(id)).length;
+  const unscored = attempted.size - scored;
+  const wait = Math.max(0, Math.ceil((evaluationRetryAt - Date.now()) / 1000));
+  const limited = evaluationRetryFrom ? (wait ? `。魔搭建议等待 ${wait} 秒再继续` :
+    "。魔搭受限，恢复后可以从受限题继续") : "";
+  byId("evaluation-status").textContent =
+    `通过 ${passed}/${scored} 道已评分题，调用失败未评分 ${unscored} 题，尚未运行 ${pending} 题${limited}。`;
+  byId("resume-evaluation").hidden = !evaluationRetryFrom;
+}
+async function runEvaluation(resume) {
+  const run = byId("run-evaluation");
+  const next = byId("resume-evaluation");
+  const status = byId("evaluation-status");
+  if (resume && evaluationRetryAt > Date.now()) {
+    showEvaluationProgress();
+    return;
+  }
+  const includeOcr = resume ? evaluationIncludesOcr : byId("evaluation-ocr").checked;
+  run.disabled = next.disabled = true;
+  status.textContent = "正在逐题调用模型，请等待结果…";
+  try {
+    const report = await send("/evaluation/baseline", {
+      include_ocr: includeOcr, from_case: resume ? evaluationRetryFrom : null,
+      completed_cases: resume ? evaluationRows.filter(row => typeof row.answer_pass === "boolean").map(row => row.id) : []
+    });
+    const merged = new Map((resume ? evaluationRows : []).map(row => [row.id, row]));
+    for (const row of report.cases) merged.set(row.id, row);
+    evaluationRows = [...merged.values()];
+    evaluationCaseIds = report.case_ids;
+    evaluationRetryFrom = report.retry_from;
+    const limited = report.cases.find(row => row.id === evaluationRetryFrom);
+    evaluationRetryAt = limited?.retry_after_seconds ? Date.now() + limited.retry_after_seconds * 1000 : 0;
+    evaluationIncludesOcr = includeOcr;
+    showEvaluationProgress();
+    try {
+      sessionStorage.setItem(evaluationStorageKey(), JSON.stringify({
+        rows: evaluationRows, caseIds: evaluationCaseIds, retryFrom: evaluationRetryFrom,
+        retryAt: evaluationRetryAt, includeOcr: evaluationIncludesOcr
+      }));
+    } catch {
+      // A storage failure should not discard the visible report.
+    }
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    run.disabled = next.disabled = false;
+    next.hidden = !evaluationRetryFrom;
+  }
+}
+byId("evaluation-form").addEventListener("submit", event => {
+  event.preventDefault();
+  runEvaluation(false);
+});
+byId("resume-evaluation").addEventListener("click", () => runEvaluation(true));
+byId("manage-members").addEventListener("click", () => {
+  byId("add-member").reset();
+  byId("member-status").textContent = "";
+  byId("member-dialog").showModal();
+});
+byId("close-member").addEventListener("click", () => byId("member-dialog").close());
+byId("member-dialog").addEventListener("close", () => { byId("member-password").value = ""; });
+submit("add-member", "member-status", "正在创建账号…", async () => {
+  const member = await send("/members", {
+    name: byId("member-name").value.trim(), password: byId("member-password").value,
+    role: byId("member-role").value, namespace: byId("member-namespace").value
+  });
+  byId("add-member").reset();
+  return `已创建 ${member.name}。成员可用刚设置的密码登录。`;
+});
+submit("upload", "upload-status", "正在上传…", async () => {
+  const file = byId("file").files[0];
+  if (!file.size || file.size > 20 * 1024 * 1024) throw new Error("请选择不超过 20 MB 的非空文件。");
+  const existing = editing;
+  const form = new FormData();
+  form.set("file", file);
+  form.set("options", JSON.stringify({
+    department: byId("department").value,
+    source: byId("source").value,
+    namespace: byId("upload-namespace").value,
+    access_tags: existing?.access_tags || [],
+    strategy: byId("chunk-strategy").value
+  }));
+  const response = await fetch(existing ? `/jobs/files/${encodeURIComponent(existing.id)}` : "/jobs/files",
+    {method: existing ? "PUT" : "POST", body: form});
+  const data = await response.json();
+  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "请检查上传设置。");
+  byId("upload-dialog").close();
+  jobStates.set(data.id, "queued");
+  byId("status").textContent = "文件已提交，可在「入库任务」查看进度。";
+  byId("ingestion-panel").open = true;
+  await refreshJobs();
+  return "";
+});
+function renderSources(sources) {
+  for (const source of sources) {
+    const details = document.createElement("details");
+    details.className = "evidence";
+    const title = document.createElement("summary");
+    title.textContent = `[${source.id}] ${source.name} · ${source.location || `片段 ${source.chunk}`}`;
+    const content = document.createElement("pre");
+    content.textContent = source.text;
+    const link = document.createElement("a");
+    link.href = source.url;
+    link.textContent = `打开版本 ${source.version} 的原始片段`;
+    details.append(title, content, link);
+    if (source.original_url) {
+      const original = document.createElement("a");
+      original.href = source.original_url;
+      original.textContent = source.page ? `查看 PDF 第 ${source.page} 页` : "下载原文件";
+      details.append(document.createTextNode(" · "), original);
+    }
+    byId("sources").append(details);
+  }
+}
+submit("ask", "pending", "正在检索…", async () => {
+  showFeedback(null);
+  byId("answer-placeholder").hidden = true;
+  byId("answer").textContent = "";
+  byId("sources").replaceChildren();
+  const response = await fetch("/questions/stream", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({text: byId("question").value, namespace: byId("query-namespace").value,
+      strategy: byId("query-strategy").value, rerank: byId("rerank").checked})
+  });
+  if (!response.ok || !response.body) throw new Error("无法开启问答，请检查输入或连接。");
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  let finished = false;
+  try {
+    while (!finished) {
+      const part = await reader.read();
+      if (part.done) break;
+      buffer += part.value;
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const [event, data] = buffer.slice(0, boundary).split("\n");
+        buffer = buffer.slice(boundary + 2);
+        const payload = JSON.parse(data.slice(6));
+        if (event === "event: error") throw new Error(payload.detail);
+        if (event === "event: status" && payload.stage === "generation_and_verification") {
+          byId("pending").textContent = "正在生成并核对引用…";
+        }
+        if (event === "event: delta") byId("answer").append(document.createTextNode(payload.text));
+        if (event === "event: done") {
+          renderSources(payload.sources);
+          showFeedback(payload.feedback_id);
+          finished = true;
+        }
+      }
+    }
+  } finally {
+    await reader.cancel();
+  }
+  if (!finished) throw new Error("回答连接提前结束。");
+  return "";
+});
+</script>

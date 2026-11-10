@@ -1,0 +1,6 @@
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.zip binary
+rag-test-samples/06-helpdesk.txt binary

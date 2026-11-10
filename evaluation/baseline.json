@@ -1,0 +1,64 @@
+[
+  {
+    "id": "pdf-travel",
+    "question": "跨市住宿报销每晚上限是多少？",
+    "reference": "跨市住宿报销上限为每晚 680 元。",
+    "evidence": [{"file": "01-travel-policy.pdf", "location": "第 2 页", "contains": ["跨市住宿", "680"]}],
+    "answer_contains": [["680", "元"]]
+  },
+  {
+    "id": "word-loan",
+    "question": "便携投影仪最多借用几天？",
+    "reference": "便携投影仪最长可借用 9 天。",
+    "evidence": [{"file": "02-device-loans.docx", "location": "元素 4", "contains": ["便携投影仪", "9 天"]}],
+    "answer_contains": [["9 天"], ["九天"]]
+  },
+  {
+    "id": "excel-stock",
+    "question": "蓝色标签纸有多少卷库存？",
+    "reference": "蓝色标签纸库存为 156 卷。",
+    "evidence": [{"file": "03-inventory.xlsx", "location": "库存 · 第 2 行", "contains": ["蓝色标签纸", "156"]}],
+    "answer_contains": [["156", "卷"]]
+  },
+  {
+    "id": "ppt-drill",
+    "question": "订单接口演练什么时候开始？",
+    "reference": "订单接口演练于 2026 年 9 月 14 日 14:30 开始。",
+    "evidence": [{"file": "04-api-drill.pptx", "location": "第 1 张幻灯片", "contains": ["订单接口演练", "14:30"]}],
+    "answer_contains": [["2026年9月14日", "14:30"], ["2026-09-14", "14:30"]]
+  },
+  {
+    "id": "md-backup",
+    "question": "财务凭证备份保留多少天？",
+    "reference": "财务凭证备份保留 47 天。",
+    "evidence": [{"file": "05-backup-policy.md", "contains": ["财务凭证", "47 天"]}],
+    "answer_contains": [["47 天"], ["四十七天"]]
+  },
+  {
+    "id": "txt-helpdesk",
+    "question": "P2 工单首次响应时限是多少？",
+    "reference": "P2 工单的首次响应时限为 35 分钟。",
+    "evidence": [{"file": "06-helpdesk.txt", "contains": ["P2", "35 分钟"]}],
+    "answer_contains": [["35 分钟"], ["三十五分钟"]]
+  },
+  {
+    "id": "html-visitor",
+    "question": "临时访客二维码自签发起有效多久？",
+    "reference": "临时访客二维码从签发起有效 25 分钟。",
+    "evidence": [{"file": "07-visitor-policy.html", "location": "HTML 元素 2", "contains": ["临时访客二维码", "25 分钟"]}],
+    "answer_contains": [["25 分钟"], ["二十五分钟"]]
+  },
+  {
+    "id": "pdf-ocr",
+    "requires_ocr": true,
+    "question": "Locker ORION 上次检查的日期是什么？",
+    "reference": "Locker ORION 上次检查的日期是 2026 年 8 月 17 日。",
+    "evidence": [{"file": "08-inspection-scan.pdf", "location": "第 1 页", "contains": ["ORION", "2026-08-17"]}],
+    "answer_contains": [["2026-08-17"], ["2026年8月17日"]]
+  },
+  {
+    "id": "no-match",
+    "question": "XQZ84572？",
+    "evidence": []
+  }
+]

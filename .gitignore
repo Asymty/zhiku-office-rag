@@ -1,0 +1,10 @@
+.venv/
+.venv-ragas/
+__pycache__/
+atlas.sqlite3*
+accounts.local.json
+.env
+.env.*
+!.env.example
+.tessdata/
+sensitive-words.local.txt
