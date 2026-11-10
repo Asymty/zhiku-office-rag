@@ -226,3 +226,7 @@ python -m venv .venv-ragas
 ```
 
 测试使用临时 SQLite 数据库，生成文档样本并模拟模型接口。真实模型的检索相关性、重排阈值和事实校验质量需另外评估。
+
+## 许可证
+
+本项目采用 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0-only）。第三方依赖遵循各自的许可证，PDF 解析使用的 [PyMuPDF 提供 AGPL 和商业许可](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright)。
