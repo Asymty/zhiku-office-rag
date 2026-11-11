@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+.venv*
+.tessdata
+**/__pycache__
+**/*.pyc
+atlas.sqlite3*
+accounts.local.json
+sensitive-words.local.txt
+tests
+evaluation/*.zip

@@ -1,0 +1,260 @@
+[
+  {
+    "id": "pdf-travel",
+    "question": "跨市住宿报销每晚上限是多少？",
+    "reference": "跨市住宿报销上限为每晚 680 元。",
+    "evidence": [{"file": "01-travel-policy.pdf", "location": "第 2 页", "contains": ["跨市住宿", "680"]}],
+    "answer_contains": [["680", "元"]]
+  },
+  {
+    "id": "word-loan",
+    "question": "便携投影仪最多借用几天？",
+    "reference": "便携投影仪最长可借用 9 天。",
+    "evidence": [{"file": "02-device-loans.docx", "location": "元素 4", "contains": ["便携投影仪", "9 天"]}],
+    "answer_contains": [["9 天"], ["九天"]]
+  },
+  {
+    "id": "excel-stock",
+    "question": "蓝色标签纸有多少卷库存？",
+    "reference": "蓝色标签纸库存为 156 卷。",
+    "evidence": [{"file": "03-inventory.xlsx", "location": "库存 · 第 2 行", "contains": ["蓝色标签纸", "156"]}],
+    "answer_contains": [["156", "卷"]]
+  },
+  {
+    "id": "ppt-drill",
+    "question": "订单接口演练什么时候开始？",
+    "reference": "订单接口演练于 2026 年 9 月 14 日 14:30 开始。",
+    "evidence": [{"file": "04-api-drill.pptx", "location": "第 1 张幻灯片", "contains": ["订单接口演练", "14:30"]}],
+    "answer_contains": [["2026年9月14日", "14:30"], ["2026-09-14", "14:30"]]
+  },
+  {
+    "id": "md-backup",
+    "question": "财务凭证备份保留多少天？",
+    "reference": "财务凭证备份保留 47 天。",
+    "evidence": [{"file": "05-backup-policy.md", "contains": ["财务凭证", "47 天"]}],
+    "answer_contains": [["47 天"], ["四十七天"]]
+  },
+  {
+    "id": "txt-helpdesk",
+    "question": "P2 工单首次响应时限是多少？",
+    "reference": "P2 工单的首次响应时限为 35 分钟。",
+    "evidence": [{"file": "06-helpdesk.txt", "contains": ["P2", "35 分钟"]}],
+    "answer_contains": [["35 分钟"], ["三十五分钟"]]
+  },
+  {
+    "id": "html-visitor",
+    "question": "临时访客二维码自签发起有效多久？",
+    "reference": "临时访客二维码从签发起有效 25 分钟。",
+    "evidence": [{"file": "07-visitor-policy.html", "location": "HTML 元素 2", "contains": ["临时访客二维码", "25 分钟"]}],
+    "answer_contains": [["25 分钟"], ["二十五分钟"]]
+  },
+  {
+    "id": "pdf-ocr",
+    "requires_ocr": true,
+    "question": "Locker ORION 上次检查的日期是什么？",
+    "reference": "Locker ORION 上次检查的日期是 2026 年 8 月 17 日。",
+    "evidence": [{"file": "08-inspection-scan.pdf", "location": "第 1 页", "contains": ["ORION", "2026-08-17"]}],
+    "answer_contains": [["2026-08-17"], ["2026年8月17日"]]
+  },
+  {
+    "id": "no-match",
+    "question": "XQZ84572？",
+    "evidence": []
+  },
+  {
+    "id": "direct-lodging",
+    "question": "2026 年 7 月起一般城市出差，住宿每晚可以报销多少？",
+    "reference": "一般城市住宿每晚限 560 元。",
+    "evidence": [{"file":"09-travel-current.md","contains":["一般城市","560 元"]}],
+    "answer_contains": [["560 元"]]
+  },
+  {
+    "id": "direct-special-city",
+    "question": "按现行办法，在青岚市住宿每晚能报销多少？",
+    "reference": "青岚市住宿每晚限 820 元。",
+    "evidence": [{"file":"09-travel-current.md","contains":["青岚市","820 元"]}],
+    "answer_contains": [["820 元"]]
+  },
+  {
+    "id": "direct-receipts",
+    "question": "按现行差旅办法报销住宿时，需要同时提交哪两项材料？",
+    "reference": "住宿电子发票和付款记录。",
+    "evidence": [{"file":"09-travel-current.md","contains":["住宿电子发票","付款记录"]}],
+    "answer_contains": [["电子发票","付款记录"]]
+  },
+  {
+    "id": "direct-cross-month",
+    "question": "跨月出差回程后多长时间内要提交报销？",
+    "reference": "返程后 15 个自然日内提交。",
+    "evidence": [{"file":"09-travel-current.md","contains":["跨月差旅","15 个自然日"]}],
+    "answer_contains": [["15","自然日"],["十五","自然日"]]
+  },
+  {
+    "id": "direct-local-transit",
+    "question": "现行出差市内交通报销每天最多多少？",
+    "reference": "最高 90 元。",
+    "evidence": [{"file":"09-travel-current.md","contains":["市内交通","90 元"]}],
+    "answer_contains": [["90 元"]]
+  },
+  {
+    "id": "direct-ride",
+    "question": "出差坐网约车，需要附什么凭证？",
+    "reference": "需要随附行程单。",
+    "evidence": [{"file":"09-travel-current.md","contains":["网约车","行程单"]}],
+    "answer_contains": [["行程单"]]
+  },
+  {
+    "id": "direct-meals",
+    "question": "2026 年 7 月后的普通差旅，餐费每天补助多少？",
+    "reference": "每天 110 元。",
+    "evidence": [{"file":"09-travel-current.md","contains":["餐费","110 元"]}],
+    "answer_contains": [["110 元"]]
+  },
+  {
+    "id": "direct-lunch-deduction",
+    "question": "接待方供午餐，当天差旅餐补扣多少？",
+    "reference": "当天扣减 45 元。",
+    "evidence": [{"file":"09-travel-current.md","contains":["午餐","45 元"]}],
+    "answer_contains": [["45 元"]]
+  },
+  {
+    "id": "version-old-city",
+    "question": "2025 年 10 月的一般城市差旅，按当时办法每晚住宿限额是多少？",
+    "reference": "旧办法的一般城市住宿每晚限 480 元。",
+    "evidence": [{"file":"10-travel-archive.md","contains":["一般城市","480 元"]}],
+    "answer_contains": [["480 元"]]
+  },
+  {
+    "id": "version-old-special",
+    "question": "历史归档里青岚市住宿旧标准是多少？",
+    "reference": "旧标准为每晚 690 元。",
+    "evidence": [{"file":"10-travel-archive.md","contains":["青岚市","690 元"]}],
+    "answer_contains": [["690 元"]]
+  },
+  {
+    "id": "direct-network-priority",
+    "question": "整个办公室都连不上公司无线网络，该报哪个故障等级？",
+    "reference": "属于 P1 故障。",
+    "evidence": [{"file":"11-it-operations.md","contains":["全办公室","无线网络","P1"]}],
+    "answer_contains": [["P1"]]
+  },
+  {
+    "id": "direct-password-priority",
+    "question": "一位员工忘记密码，账号可以自助恢复，故障归为哪一级？",
+    "reference": "归类 P3。",
+    "evidence": [{"file":"11-it-operations.md","contains":["密码忘记","自助恢复","P3"]}],
+    "answer_contains": [["P3"]]
+  },
+  {
+    "id": "direct-projector-priority",
+    "question": "会议室无法投屏，但能换一间会议室，故障等级是什么？",
+    "reference": "归类 P2。",
+    "evidence": [{"file":"11-it-operations.md","contains":["投屏故障","替代会议室","P2"]}],
+    "answer_contains": [["P2"]]
+  },
+  {
+    "id": "direct-p1-response",
+    "question": "P1 故障从报障起多久需要首次响应？",
+    "reference": "P1 首次响应时限为 10 分钟。",
+    "evidence": [{"file":"11-it-operations.md","contains":["P1","首次响应","10 分钟"]}],
+    "answer_contains": [["10 分钟"],["十分钟"]]
+  },
+  {
+    "id": "direct-network-ticket",
+    "question": "开办公网络故障工单时要记录哪些信息？",
+    "reference": "应记录受影响区域、首次发现时间和影响人数。",
+    "evidence": [{"file":"11-it-operations.md","contains":["受影响区域","首次发现时间","影响人数"]}],
+    "answer_contains": [["影响区域","首次发现时间","影响人数"]]
+  },
+  {
+    "id": "direct-spare-laptop",
+    "question": "维修期间周转的备用笔记本最多可领用多久？",
+    "reference": "最多领用 5 个工作日。",
+    "evidence": [{"file":"11-it-operations.md","contains":["备用笔记本","5 个工作日"]}],
+    "answer_contains": [["5","工作日"],["五","工作日"]]
+  },
+  {
+    "id": "direct-contractor-permit",
+    "question": "承包商的夜间施工通行证最晚用到几点？",
+    "reference": "当天 23:00 失效。",
+    "evidence": [{"file":"12-office-access.md","contains":["夜间施工通行证","23:00"]}],
+    "answer_contains": [["23:00"],["晚上11点"]]
+  },
+  {
+    "id": "direct-card-fee",
+    "question": "员工第一次补办遗失的门禁卡要付多少钱？",
+    "reference": "首次补卡费用为 30 元。",
+    "evidence": [{"file":"12-office-access.md","contains":["首次补卡","30 元"]}],
+    "answer_contains": [["30 元"]]
+  },
+  {
+    "id": "cross-version-lodging",
+    "question": "青岚市差旅住宿每晚限额在 2026 年 7 月新旧办法切换前后各是多少？",
+    "reference": "历史办法为 690 元，现行办法为 820 元。",
+    "evidence": [
+      {"file":"10-travel-archive.md","contains":["青岚市","690 元"]},
+      {"file":"09-travel-current.md","contains":["青岚市","820 元"]}
+    ],
+    "answer_contains": [["690 元","820 元"]]
+  },
+  {
+    "id": "cross-network-response",
+    "question": "整层办公室所有员工都连不上公司无线网，这是什么等级，多久要首次响应？",
+    "reference": "属于 P1 故障，首次响应时限为 10 分钟。",
+    "evidence": [
+      {"file":"11-it-operations.md","contains":["全办公室","无线网络","P1"]},
+      {"file":"11-it-operations.md","contains":["P1","首次响应","10 分钟"]}
+    ],
+    "answer_contains": [["P1","10 分钟"],["P1","十分钟"]]
+  },
+  {
+    "id": "cross-equipment-loans",
+    "question": "设备借用里，便携投影仪与维修周转笔记本各自最多能用多久？",
+    "reference": "便携投影仪最多借用 9 天，备用笔记本最多领用 5 个工作日。",
+    "evidence": [
+      {"file":"02-device-loans.docx","contains":["便携投影仪","9 天"]},
+      {"file":"11-it-operations.md","contains":["备用笔记本","5 个工作日"]}
+    ],
+    "answer_contains": [["9 天","5 个工作日"],["九天","五个工作日"]]
+  },
+  {
+    "id": "cross-visitor",
+    "question": "访客拿到临时二维码后多久过期，去另一层楼还需要谁陪同？",
+    "reference": "二维码自签发起有效 25 分钟，跨楼层须由接待员工全程陪同。",
+    "evidence": [
+      {"file":"07-visitor-policy.html","contains":["临时访客二维码","25 分钟"]},
+      {"file":"12-office-access.md","contains":["跨楼层","接待员工","陪同"]}
+    ],
+    "answer_contains": [["25 分钟","接待员工","陪同"],["二十五分钟","接待员工","陪同"]]
+  },
+  {
+    "id": "cross-site-access",
+    "question": "承包商夜间施工通行证何时失效？普通访客离场由谁在门禁台签出？",
+    "reference": "通行证当天 23:00 失效；访客离场由接待员工在门禁台签出。",
+    "evidence": [
+      {"file":"12-office-access.md","contains":["夜间施工通行证","23:00"]},
+      {"file":"12-office-access.md","contains":["访客离场","接待员工","门禁台签出"]}
+    ],
+    "answer_contains": [["23:00","接待员工","签出"]]
+  },
+  {
+    "id": "refuse-p1-resolution",
+    "question": "P1 办公室无线网故障必须在多少分钟内彻底解决？",
+    "evidence": []
+  },
+  {
+    "id": "refuse-qr-renewal",
+    "question": "临时访客二维码到期后可以自动续期几次？",
+    "evidence": []
+  },
+  {
+    "id": "refuse-meeting-deposit",
+    "question": "松柏会议室要交多少押金？",
+    "evidence": []
+  },
+  {
+    "id": "refuse-parking",
+    "question": "青岚市出差自驾停放在酒店，过夜停车费可报销多少？",
+    "evidence": []
+  }
+]

@@ -5,7 +5,7 @@ import time
 from contextlib import closing, contextmanager
 
 from fastapi import HTTPException
-from content_policy import SensitiveContentError
+from .content_policy import SensitiveContentError
 
 
 class DocumentParseError(HTTPException):
@@ -45,12 +45,12 @@ def track(database, account, action, namespace, document_id=None):
             with closing(database()) as connection, connection:
                 cursor = connection.execute("""
                     INSERT INTO audit_events(tenant, actor, action, namespace, document_id, version,
-                                             status, duration_ms, verification, sources, created_at, failure_kind)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                             status, duration_ms, verification, sources, created_at, failure_kind, resource_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (account.tenant if account else "default", account.name if account else "local",
                       action, entry["namespace"], entry["document_id"], entry["version"], status,
                       round((time.perf_counter() - started) * 1000), entry["verification"],
-                      json.dumps(entry["sources"]), time.time_ns() // 1_000_000, failure_kind))
+                      json.dumps(entry["sources"]), time.time_ns() // 1_000_000, failure_kind, entry.get("resource_id")))
             entry["event_id"] = cursor.lastrowid
         except sqlite3.Error:
             logging.getLogger(__name__).exception("Could not persist an audit event")

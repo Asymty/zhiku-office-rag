@@ -133,6 +133,7 @@ dialog::backdrop { background: #14282075; }
       <label class="form-label" for="question">你的问题
         <textarea id="question" required maxlength="2000" rows="3" placeholder="例如，跨市住宿报销每晚上限是多少？"></textarea>
       </label>
+      <label><input id="use-assistant" type="checkbox"> 行政助手（制度问答、报销计算、IT 工单）</label>
       <details>
         <summary>检索设置</summary>
         <label class="form-label" for="query-namespace">知识库<select id="query-namespace"></select></label>
@@ -143,6 +144,7 @@ dialog::backdrop { background: #14282075; }
           </select>
         </label>
         <label><input id="rerank" type="checkbox"> 启用重排（需配置重排服务）</label>
+        <label><input id="adaptive-retrieval" type="checkbox"> 检查证据是否充分，最多检索 3 轮</label>
       </details>
       <div class="toolbar"><button type="submit">检索并回答</button><p id="pending" class="status" role="status"></p></div>
     </form>
@@ -150,6 +152,11 @@ dialog::backdrop { background: #14282075; }
       <h3>回答</h3><p id="answer-placeholder" class="muted">提交问题后，回答和引用会显示在这里。</p>
       <pre id="answer" aria-live="polite"></pre>
       <section id="sources" aria-label="回答来源"></section>
+      <div id="ticket-draft" class="feedback" hidden>
+        <pre id="ticket-fields"></pre>
+        <button type="button" id="confirm-ticket">确认提交工单</button>
+        <p id="ticket-status" class="status" role="status"></p>
+      </div>
       <div id="feedback" class="feedback" hidden>
         <div class="doc-actions">
           <button type="button" id="feedback-yes" class="secondary">有用</button>
@@ -175,7 +182,8 @@ dialog::backdrop { background: #14282075; }
     <label class="form-label" for="upload-namespace">知识库<select id="upload-namespace"></select></label>
     <label class="form-label" for="chunk-strategy">分块策略
       <select id="chunk-strategy">
-        <option value="hierarchical">层级分块</option><option value="fixed">固定长度</option><option value="semantic">语义分块</option>
+        <option value="hierarchical">层级分块</option><option value="parent_child">父子块</option>
+        <option value="fixed">固定长度</option><option value="semantic">语义分块</option>
       </select>
     </label>
     <label class="form-label" for="department">所属部门（可选）<input id="department" maxlength="100"></label>
@@ -218,7 +226,7 @@ dialog::backdrop { background: #14282075; }
   <form id="audit-filters">
     <div class="audit-filters">
       <label class="form-label">账号<input id="audit-actor" maxlength="64" placeholder="全部账号"></label>
-      <label class="form-label">操作<select id="audit-action"><option value="">全部操作</option><option value="ingest">导入</option><option value="update">更新</option><option value="offline">下线</option><option value="question">问答</option><option value="retrieve">检索</option></select></label>
+      <label class="form-label">操作<select id="audit-action"><option value="">全部操作</option><option value="ingest">导入</option><option value="update">更新</option><option value="offline">下线</option><option value="question">问答</option><option value="retrieve">检索</option><option value="ticket">IT 工单</option></select></label>
       <label class="form-label">反馈<select id="audit-feedback"><option value="">全部反馈</option><option value="helpful">有用</option><option value="unhelpful">没用</option></select></label>
       <label class="form-label">开始时间<input id="audit-after" type="datetime-local"></label>
       <label class="form-label">结束时间<input id="audit-before" type="datetime-local"></label>
@@ -599,7 +607,7 @@ async function submitFeedback(helpful) {
 }
 byId("feedback-yes").addEventListener("click", () => submitFeedback(true));
 byId("feedback-no").addEventListener("click", () => submitFeedback(false));
-const auditActions = {ingest: "导入", update: "更新", offline: "下线", question: "问答", retrieve: "检索"};
+const auditActions = {ingest: "导入", update: "更新", offline: "下线", question: "问答", retrieve: "检索", ticket: "IT 工单"};
 const auditResults = {supported: "证据支持", no_evidence: "资料不足", unsupported: "事实校验未通过", invalid_citation: "引用无效"};
 async function loadAudit() {
   const params = new URLSearchParams();
@@ -620,7 +628,7 @@ async function loadAudit() {
     const feedback = row.feedback_helpful == null ? "" : row.feedback_helpful ? "反馈：有用" :
       `反馈：没用${row.feedback_reason ? "（" + feedbackReasons[row.feedback_reason] + "）" : ""}`;
     details.textContent = [new Date(row.created_at).toLocaleString("zh-CN"), row.namespace,
-      row.document_name || row.document_id, row.version && `版本 ${row.version}`,
+      row.document_name || row.document_id || row.resource_id, row.version && `版本 ${row.version}`,
       auditResults[row.verification], alertNames[row.failure_kind], feedback, `${row.duration_ms} ms`].filter(Boolean).join(" · ");
     item.append(title, details);
     for (const source of row.sources) {
@@ -811,20 +819,58 @@ function renderSources(sources) {
     byId("sources").append(details);
   }
 }
+let ticketDraft;
+const ticketCategories = {hardware: "硬件", network: "网络", software: "软件", other: "其他"};
+function renderTicket(draft) {
+  ticketDraft = draft;
+  byId("ticket-draft").hidden = !draft;
+  byId("confirm-ticket").disabled = false;
+  byId("ticket-status").textContent = "";
+  if (draft) {
+    byId("ticket-fields").textContent =
+      `类别：${ticketCategories[draft.category]}\n地点：${draft.location}\n故障：${draft.description}`;
+  }
+}
+byId("confirm-ticket").addEventListener("click", async () => {
+  const draft = ticketDraft;
+  if (!draft) return;
+  byId("confirm-ticket").disabled = true;
+  byId("ticket-status").textContent = "正在提交…";
+  try {
+    const result = await send(`/agent/tickets/${encodeURIComponent(draft.draft_id)}/confirm`, {confirmed: true});
+    if (ticketDraft === draft) byId("ticket-status").textContent = `工单已提交 · ${result.ticket_id}`;
+  } catch (error) {
+    if (ticketDraft !== draft) return;
+    byId("ticket-status").textContent = error.message;
+    byId("confirm-ticket").disabled = false;
+  }
+});
 submit("ask", "pending", "正在检索…", async () => {
   showFeedback(null);
+  renderTicket(null);
   byId("answer-placeholder").hidden = true;
   byId("answer").textContent = "";
   byId("sources").replaceChildren();
+  const question = {text: byId("question").value, namespace: byId("query-namespace").value,
+    strategy: byId("query-strategy").value, rerank: byId("rerank").checked,
+    adaptive: byId("adaptive-retrieval").checked};
+  if (byId("use-assistant").checked) {
+    byId("pending").textContent = "行政助手正在处理…";
+    const result = await send("/agent/chat", question);
+    byId("answer").textContent = result.answer;
+    renderSources(result.sources);
+    showFeedback(result.feedback_id);
+    renderTicket(result.ticket_draft);
+    return "";
+  }
   const response = await fetch("/questions/stream", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({text: byId("question").value, namespace: byId("query-namespace").value,
-      strategy: byId("query-strategy").value, rerank: byId("rerank").checked})
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(question)
   });
   if (!response.ok || !response.body) throw new Error("无法开启问答，请检查输入或连接。");
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   let finished = false;
+  let retrievalInfo;
   try {
     while (!finished) {
       const part = await reader.read();
@@ -843,6 +889,7 @@ submit("ask", "pending", "正在检索…", async () => {
         if (event === "event: done") {
           renderSources(payload.sources);
           showFeedback(payload.feedback_id);
+          retrievalInfo = payload.retrieval;
           finished = true;
         }
       }
@@ -851,6 +898,7 @@ submit("ask", "pending", "正在检索…", async () => {
     await reader.cancel();
   }
   if (!finished) throw new Error("回答连接提前结束。");
-  return "";
+  if (!retrievalInfo) return "";
+  return `检索 ${retrievalInfo.rounds} 轮 · ${retrievalInfo.status === "sufficient" ? "证据充分" : "证据不足"}`;
 });
 </script>

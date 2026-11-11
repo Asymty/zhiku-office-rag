@@ -1,6 +1,23 @@
 # 知库问答｜企业知识库 RAG
 
-FastAPI 提供文件入库、混合检索和问答。SQLite 保存原文件、文档版本、文本片段、向量、BM25 索引和向量缓存。默认由本地 Ollama 运行 BGE-M3 和 Qwen，可接 OpenAI 兼容的嵌入接口及 Hugging Face TEI 重排服务。
+知库问答面向企业内部行政服务。员工可查询差旅报销、设备借用、库存和服务台制度，计算住宿报销上限，或确认提交 IT 工单。FastAPI 提供文件入库、混合检索和问答。SQLite 保存原文件、文档版本、文本片段、向量、BM25 索引、向量缓存和工单。默认由本地 Ollama 运行 BGE-M3 和 Qwen，可接 OpenAI 兼容的嵌入接口及 Hugging Face TEI 重排服务。
+
+## 项目结构
+
+```text
+app.py                  FastAPI 服务入口和 HTTP 接口
+zhiku/                  权限、审计、文档解析、后台入库与检索
+web/                    知库问答页面
+evaluation/             基准评估集、测试文档和样本压缩包
+tests/                  接口及业务回归测试
+create_admin.py         首次创建管理员
+evaluate_rag.py         检索与问答基准命令
+compare_retrieval.py    分块与检索配置对照
+evaluate_ragas.py       RAGAS 批量评分命令
+knowledge_base_tool.py  供 Agent 集成的 Python 客户端
+```
+
+样本和预期答案见 [测试问题](evaluation/fixtures/测试问题.md)，也可下载 [测试样本压缩包](evaluation/rag-test-samples.zip)。本机的 `.env`、SQLite 数据库和账号配置仍从项目根目录读取。
 
 ## 魔搭免费 API 启动
 
@@ -30,6 +47,27 @@ python -m venv .venv
 
 打开 [知识库](http://127.0.0.1:8010) 上传文件并问答，或打开 [API 文档](http://127.0.0.1:8010/docs) 调用接口。项目目录下的 `atlas.sqlite3` 保存原件和索引。刷新页面或重启服务后，文档库会重新加载已保存的文件。可在文档卡片打开原件、上传新版或下线。已有 SQLite 索引会自动迁移，迁移前可备份数据库文件。
 
+## Docker Compose 启动
+
+在项目目录启动 Docker Desktop，再运行下面的命令。容器读取项目的 `.env`。已有魔搭令牌时，问答继续使用魔搭。
+
+```powershell
+docker compose up -d --build --wait app
+docker compose exec app python create_admin.py
+```
+
+打开 [知识库](http://127.0.0.1:8010)。端口被本机服务占用时，先设置 `$env:ZHIKU_DOCKER_PORT = '8011'`。容器内置中英文 OCR 语言文件，数据库和上传原件存放在 Docker 的 `zhiku-data` 卷里。本机直接启动时使用项目目录下的 SQLite 文件，两种启动方式各自读取自己的数据库。`docker compose down` 保留数据卷，带 `-v` 会删除数据卷。已有账号时可跳过创建管理员。
+
+如需容器内全链路使用 Ollama，新建空的 `.env.docker-local`，再启动本地模型服务。第一次会下载 BGE-M3 和 Qwen2.5 3B，等下载完成后再入库和提问。使用其他本地模型时，在该文件里设置模型名，并在 Ollama 容器中执行 `ollama pull` 下载所选模型。
+
+```powershell
+$env:ZHIKU_DOCKER_ENV_FILE = '.env.docker-local'
+docker compose --profile local up -d --build
+docker compose --profile local logs -f ollama-models
+```
+
+需要重排时，可加 `--profile rerank` 启动 CPU 版 TEI，首次启动会下载 `BAAI/bge-reranker-base`。连接已有模型服务时，用 `ZHIKU_DOCKER_OLLAMA_URL` 和 `ZHIKU_DOCKER_RERANK_URL` 指定容器可访问的地址。容器里的文件配置也需使用容器内路径。
+
 ## 文档入库
 
 | 格式 | 提取与定位 |
@@ -44,6 +82,20 @@ python -m venv .venv
 扫描件需把 [Tesseract 官方语言文件](https://github.com/tesseract-ocr/tessdata_fast) 中的 `chi_sim.traineddata` 和 `eng.traineddata` 放在同一目录，并将 `TESSDATA_PREFIX` 指向该目录。默认语言为 `chi_sim+eng`，可用 `INKATLAS_OCR_LANG` 覆盖。复杂版面、扫描表格、浮动水印和低清扫描件的提取质量取决于文件。原文件保留原始版式。Office 使用现代格式，二进制旧格式 `.doc/.xls/.ppt` 需先转换。
 
 文件最多 20 MB。入库选项包括 `source`、`department`、`namespace`、`access_tags`、`strategy`、`chunk_size` 和 `overlap`。固定分块使用滑动窗口。语义分块比较相邻句子的向量相似度。层级分块保留标题路径，并以段落、表格和页面等结构为边界。正文清洗后会过滤空白和无文字的块。
+
+选择「父子块」或传入 `strategy: "parent_child"` 可使用约 900 字的父块、250 字的子块和 50 字的子块重叠。子块参与 BM25 和向量召回，检索按父块合并命中，再重排并返回父块作为证据。父块保留页码等来源信息，并受全局上下文预算约束。已有文档可通过上传更新版本采用这套分块。
+
+## 行政助手
+
+在问答区勾选「行政助手」。LangGraph 根据模型返回的结构化意图选择业务分支。
+
+| 示例 | 处理过程 |
+| --- | --- |
+| 跨市住宿报销标准是什么？ | 复用当前知识库问答及引用校验。 |
+| 去上海出差住 3 晚，住宿费最多能报多少？ | 检索适用制度，逐句核对每晚上限并计算。导入差旅样本后，可得到每晚 680 元、3 晚 2040 元。输入天数时会请员工补充住宿晚数。 |
+| 帮我提交 IT 工单，三楼会议室的打印机卡纸。 | 提取员工给出的故障及地点，展示草稿。员工确认后写入本地工单表，返回工单号，管理员可在审计中查看提交记录。 |
+
+调用入口为 `POST /agent/chat`，沿用问答的知识库和权限参数。工单草稿有效期 15 分钟。用户确认后调用 `POST /agent/tickets/{draft_id}/confirm` 并传入 `{"confirmed": true}`。同一草稿重复确认会返回原工单号。工单保存在项目的 SQLite 数据库。
 
 ## 启用账号与知识库权限
 
@@ -128,6 +180,7 @@ API 为 `GET /audit`，可传 `actor`、`action`、`after`、`before` 和 `limit
 - **索引**。SQLite FTS5 用 BM25 计算关键词排名，中文经 jieba 分词。向量侧可选择精确余弦、Faiss HNSW 或 IVF。两路候选经倒数排名融合，可再交给 TEI 的交叉编码模型重排。
 - **元数据过滤**。候选进入向量检索和重排前，按知识库、部门、类型、入库时间、权限标签及最短文本长度过滤。启用账号时租户和授权标签来自服务端配置，请求只能进一步缩小范围。
 - **查询增强**。请求可选择 `none`、`rewrite`、`expand`、`decompose` 或 `hyde`，可传入最近对话历史。HyDE 的假想答案只参与向量检索。生成输入使用真实检索证据。
+- **检索充分性检查**。在网页检索设置启用「检查证据是否充分」，或在问答请求传入 `adaptive: true`。每轮检索后由模型评判证据，证据不足时使用改写后的检索词继续，最多 3 轮。检索词重复或轮次用尽时返回「资料不足」。响应的 `retrieval` 字段返回轮数和状态。该选项会增加模型调用次数，生成后的事实校验仍独立执行。
 - **上下文与事实校验**。按预算抽取相关句段，使用 UTF-8 序列化大小作为保守的 token 预算估算。生成后检查引用编号，再调用模型检查事实和引用证据的一致性。未通过时返回资料不足。模型判定质量需要用业务样本评估。
 - **流式接口**。SSE 先发送检索和生成阶段事件，事实校验后分段发送回答，最后发送引用。上游模型的原始 token 在校验完成前不对业务侧发布。
 
@@ -192,6 +245,24 @@ print(result["sources"])
 ```
 
 已配置 `TESSDATA_PREFIX` 后去掉 `--skip-ocr`，可测完整的 8 个证据问答和 1 个无匹配问题。评估集见 `evaluation/baseline.json`，每条正例按文件、可选位置、证据关键词标注。脚本输出 JSON，包含 Hit@K、Precision@K、证据 Recall@K、MRR@K、无匹配题的空检索结果和逐题命中位置。Precision@K 以 K 为分母，证据 Recall@K 以题目中标注的证据数为分母。
+
+用 `--chunk-strategy hierarchical` 或 `--chunk-strategy parent_child` 在同一评估集比较分块。报告同时包含 NDCG@K 和检索耗时 P95。
+
+运行下面的命令生成对照表。各组使用同一批题目、相同的 K 和上下文预算，按最终准备送给生成模型的证据评分。默认对比两种分块的 BM25 表现，容器内也可运行 `docker compose exec app python compare_retrieval.py`。
+
+```powershell
+.\.venv\Scripts\python.exe .\compare_retrieval.py --output .\retrieval-comparison.md
+```
+
+加 `--full` 后依次加入向量混合检索、重排和 Critic 多轮检索。完整对照需要配置嵌入、重排和 Critic 所用的模型服务，可能消耗 API 额度。表中报告每组题目完成数和调用失败数。P95 包含该组启用的检索与证据整理步骤，不包含文档导入和最终回答生成。
+
+[行政业务评估集](evaluation/admin.json)有 36 道虚构测试题，覆盖多格式基础题、跨片段和跨文档取证、新旧差旅办法冲突，以及资料不足时应拒答的问题。原有 9 题仍用于快速回归和网页评估。业务集可用以下命令对照两种分块，或用同一 `--dataset` 参数传给 `evaluate_rag.py` 查看逐题证据。只跑检索时，负例的空召回率和问答拒答表现需分别衡量。
+
+```powershell
+.\.venv\Scripts\python.exe .\compare_retrieval.py --dataset .\evaluation\admin.json
+```
+
+在这组题的本地 BM25 对照中，层级分块和父子分块的证据 Recall@4 分别为 0.968 和 1.000，NDCG@4 分别为 0.956 和 0.963。两组均只对 5 道负例中的 1 道返回空召回，其余负例的拒答效果需要单独运行问答评估。
 
 如需导出，可加 `--output 新报告.json`。加 `--answers` 会调用已配置的回答和校验模型，对照答案关键词和引用证据检查结果，可能消耗魔搭额度。加 `--hybrid` 使用已配置的嵌入服务评估混合检索。关键词核对适合回归样本，语义质量和 RAGAS 指标需独立评估。
 

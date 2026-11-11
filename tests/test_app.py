@@ -183,7 +183,7 @@ class DocumentLifecycleTests(unittest.TestCase):
     def test_hnsw_and_ivf_find_the_closest_vector(self):
         import faiss
 
-        from retrieval import ann_index, dense_ranks
+        from zhiku.retrieval import ann_index, dense_ranks
 
         faiss.omp_set_num_threads(1)
         rows = [{"rowid": i + 1, "vector": json.dumps([1, i / 20])} for i in range(80)]
@@ -244,7 +244,7 @@ class DocumentLifecycleTests(unittest.TestCase):
             self.model.assert_not_called()
 
     def test_account_scope_applies_to_retrieval_and_document_routes(self):
-        from access import COOKIE
+        from zhiku.access import COOKIE
 
         legacy = self.client.post("/documents", json={"name": "legacy.txt", "text": "legacy evidence"}).json()
         config = self.path.with_suffix(".json")
@@ -301,13 +301,13 @@ class DocumentLifecycleTests(unittest.TestCase):
             self.assertEqual(self.client.get(original).status_code, 401)
 
     def test_admin_provisions_member_and_logout_revokes_session(self):
-        from access import MEMBER_COOKIE, Member, store_member
+        from zhiku.access import MEMBER_COOKIE, Member, store_member
         from contextlib import closing
 
         password = "Ab1234"
         member = {"name": "staff", "password": "Cd5678", "namespace": "default"}
         def challenge():
-            with patch("access.new_captcha_code", return_value="AB234"):
+            with patch("zhiku.access.new_captcha_code", return_value="AB234"):
                 result = self.client.get("/session/captcha")
             self.assertEqual(result.status_code, 200)
             self.assertTrue(result.json()["image"].startswith("data:image/png;base64,"))
@@ -440,7 +440,7 @@ class DocumentLifecycleTests(unittest.TestCase):
         from evaluate_rag import run
 
         args = Namespace(dataset=app.ROOT / "evaluation" / "baseline.json",
-                         files=app.ROOT / "rag-test-samples", top_k=4, skip_ocr=True,
+                         files=app.ROOT / "evaluation" / "fixtures", top_k=4, skip_ocr=True,
                          answers=True, hybrid=False, from_case="ppt-drill")
         with patch.object(app, "generate_answer", side_effect=app.HTTPException(429, "limited")) as model:
             report = run(args)
@@ -641,6 +641,25 @@ class DocumentLifecycleTests(unittest.TestCase):
             self.assertEqual(self.client.get(path, headers=second).status_code, 404)
             self.assertEqual(self.client.get("/jobs/files", headers=second).json(), [])
 
+    def test_evaluation_scores_the_evidence_after_critic_and_context_packing(self):
+        from evaluate_rag import Case, evaluate_case
+
+        case = Case(id="sample", question="What is the limit?", evidence=[
+            {"file": "policy.txt", "contains": ["680"]}
+        ])
+        source = {"id": "S1", "name": "policy.txt", "location": "", "chunk": 1, "text": "The limit is 680."}
+        with patch.object(app, "prepare_answer", return_value=(None, case.question, [], [source])) as prepare:
+            result = evaluate_case(case, 4, False, rerank=True, adaptive=True)
+        request = prepare.call_args.args[0]
+        self.assertTrue(request.rerank)
+        self.assertTrue(request.adaptive)
+        self.assertEqual(result["evidence_recall_at_k"], 1)
+
+        with patch.object(app, "prepare_answer", side_effect=app.HTTPException(429)):
+            result = evaluate_case(case, 4, False, adaptive=True)
+        self.assertEqual(result["retrieval_error_status"], 429)
+        self.assertNotIn("hit", result)
+
     def test_ragas_export_contains_the_final_answer_and_actual_context(self):
         from evaluate_rag import Case, evaluate_case
 
@@ -729,3 +748,108 @@ class DocumentLifecycleTests(unittest.TestCase):
         chat_calls = [call for call in self.model.call_args_list if call.args[0] == "/api/chat"]
         self.assertEqual(len(chat_calls), 1)
         self.assertNotIn("format", chat_calls[0].args[1])
+
+    def test_parent_child_uses_child_hits_but_returns_one_parent_citation(self):
+        from contextlib import closing
+
+        text = "Origin context. " + ("policy detail " * 18) + " signalword. " + (
+            "background " * 18
+        ) + " signalword. Tail context."
+        with patch.multiple(app, EMBED_MODEL="none", INDEX_MODEL="none"):
+            created = self.client.post("/documents", json={
+                "name": "parent.txt", "text": text, "strategy": "parent_child",
+            })
+            self.assertEqual(created.status_code, 200, created.text)
+            self.assertEqual(created.json()["chunks"], 1)
+            with closing(app.database()) as connection:
+                roles = connection.execute("SELECT chunk_role, parent_position, length(text) FROM chunks").fetchall()
+                self.assertEqual(connection.execute("SELECT count(*) FROM chunk_fts").fetchone()[0], len(roles) - 1)
+            self.assertEqual(roles[0][:2], ("parent", None))
+            self.assertTrue(all(role == "child" and parent == 0 and length <= 250
+                                for role, parent, length in roles[1:]))
+            hits = self.client.post("/retrieve", json={"text": "signalword", "top_k": 4}).json()["sources"]
+            self.assertEqual(len(hits), 1)
+            self.assertIn("Origin context.", hits[0]["text"])
+            self.assertIn("Tail context.", hits[0]["text"])
+            self.assertEqual(self.client.get(hits[0]["url"]).text, hits[0]["text"])
+
+    def test_adaptive_retrieval_refines_before_generating_and_refuses_on_exhaustion(self):
+        source = {"id": "S1", "url": "/evidence", "text": "Approval is required.",
+                  "document_id": "policy", "version": 1, "chunk": 1}
+        retry = {"sufficient": False, "missing_info": "Approval", "refined_query": "approval requirements"}
+        accepted = {"sufficient": True, "missing_info": "", "refined_query": ""}
+        with patch.object(app, "retrieve", side_effect=[[], [source]]) as retrieve, patch.object(
+            app, "structured_chat", side_effect=[retry, accepted]
+        ), patch.object(app, "generate_answer", return_value={
+            "answer": "Approval is required. [S1]", "sources": [source], "verification": "supported",
+        }) as generate:
+            response = self.client.post("/questions", json={"text": "What is required?", "adaptive": True})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["retrieval"], {"rounds": 2, "status": "sufficient"})
+            self.assertEqual(retrieve.call_args.args[0].text, "approval requirements")
+            generate.assert_called_once()
+        with patch.object(app, "retrieve", return_value=[source]), patch.object(
+            app, "structured_chat", return_value=retry
+        ):
+            self.model.reset_mock()
+            response = self.client.post("/questions", json={"text": "What is required?", "adaptive": True, "max_rounds": 1})
+            self.assertEqual(response.json()["retrieval"], {"rounds": 1, "status": "exhausted"})
+            self.assertEqual(response.json()["verification"], "no_evidence")
+            self.model.assert_not_called()
+
+    def test_assistant_computes_only_from_a_cited_policy_sentence(self):
+        policy = "跨市住宿报销上限为每晚 680 元。"
+        self.client.post("/documents", json={"name": "policy.txt", "text": policy})
+        payload = {"text": "去上海出差住 3 晚，住宿费最多能报多少？"}
+        for sentence, expected in [(policy, "2040"), (policy.replace("680", "900"), None),
+                                   ("住宿报销上限为每晚 680 元。", None)]:
+            with self.subTest(sentence=sentence), patch.object(app, "structured_chat", side_effect=[
+                {"intent": "reimbursement"}, {"source_id": "S1", "quote": sentence},
+            ]):
+                response = self.client.post("/agent/chat", json=payload)
+                self.assertEqual(response.status_code, 200, response.text)
+                result = response.json()
+                if expected:
+                    self.assertEqual(result["calculation"]["maximum"], expected)
+                    self.assertEqual(result["sources"][0]["name"], "policy.txt")
+                else:
+                    self.assertNotIn("calculation", result)
+                    self.assertEqual(result["sources"], [])
+        with patch.object(app, "structured_chat", return_value={"intent": "reimbursement"}) as plan:
+            result = self.client.post("/agent/chat", json={"text": "出差 3 天最多报多少住宿费？"}).json()
+            self.assertNotIn("calculation", result)
+            plan.assert_called_once()
+
+    def test_assistant_ticket_requires_owner_confirmation_and_is_idempotent(self):
+        config = self.path.with_suffix(".json")
+        config.write_text(json.dumps([
+            {"name": name, "role": role, "token_sha256": hashlib.sha256(name.encode()).hexdigest()}
+            for name, role in [("owner", "reader"), ("other", "reader"), ("admin", "admin")]
+        ]), encoding="utf-8")
+        owner = {"Authorization": "Bearer owner"}
+        question = {"text": "帮我提交 IT 工单，三楼会议室的打印机卡纸。"}
+        plan = {"intent": "ticket", "category": "hardware", "description": "打印机卡纸", "location": "三楼会议室"}
+        with patch.dict(os.environ, {"INKATLAS_ACCOUNTS_FILE": str(config)}):
+            with patch.object(app, "structured_chat", return_value=plan | {"location": "模型推测地点"}):
+                incomplete = self.client.post("/agent/chat", json=question, headers=owner)
+                self.assertNotIn("ticket_draft", incomplete.json())
+            with patch.object(app, "structured_chat", return_value=plan):
+                prepared = self.client.post("/agent/chat", json=question, headers=owner)
+            self.assertEqual(prepared.status_code, 200, prepared.text)
+            draft = prepared.json()["ticket_draft"]
+            path = f"/agent/tickets/{draft['draft_id']}/confirm"
+            with sqlite3.connect(self.path) as connection:
+                self.assertEqual(connection.execute("SELECT status FROM it_tickets").fetchone()[0], "draft")
+            connection.close()
+            self.assertEqual(self.client.post(path, json={"confirmed": False}, headers=owner).status_code, 422)
+            self.assertEqual(self.client.post(path, json={"confirmed": True}, headers={
+                "Authorization": "Bearer other",
+            }).status_code, 404)
+            first = self.client.post(path, json={"confirmed": True}, headers=owner).json()
+            second = self.client.post(path, json={"confirmed": True}, headers=owner).json()
+            self.assertEqual(first["ticket_id"], second["ticket_id"])
+            self.assertFalse(first["already_submitted"])
+            self.assertTrue(second["already_submitted"])
+            log = self.client.get("/audit?action=ticket", headers={"Authorization": "Bearer admin"})
+            self.assertIn(first["ticket_id"], log.text)
+            self.assertNotIn("打印机卡纸", log.text)

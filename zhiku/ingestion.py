@@ -209,3 +209,22 @@ def split_blocks(blocks, strategy, size, overlap, embed):
                     continue
             yield from (Block(prefix + text, block.location, block.kind)
                         for text in windows(paragraph, size - len(prefix), min(overlap, size - len(prefix) - 1)))
+
+
+def parent_child_chunks(blocks, embed, parent_size=900, child_size=250, overlap=50):
+    parents = []
+    for block in split_blocks(blocks, "hierarchical", parent_size, overlap, embed):
+        previous = parents[-1] if parents else None
+        if (previous and previous.location == block.location and previous.kind == block.kind == "text"
+                and len(previous.text) + len(block.text) + 2 <= parent_size):
+            parents[-1] = Block(previous.text + "\n\n" + block.text, block.location, block.kind)
+        else:
+            parents.append(block)
+    position = 0
+    for parent in parents:
+        parent_position = position
+        yield parent, "parent", None
+        position += 1
+        for text in windows(parent.text, child_size, overlap):
+            yield Block(text, parent.location, parent.kind), "child", parent_position
+            position += 1

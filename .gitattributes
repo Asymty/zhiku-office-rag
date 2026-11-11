@@ -3,4 +3,4 @@
 *.xlsx binary
 *.pptx binary
 *.zip binary
-rag-test-samples/06-helpdesk.txt binary
+evaluation/fixtures/06-helpdesk.txt binary

@@ -3,8 +3,8 @@ from contextlib import closing
 
 from pydantic import ValidationError
 
-from access import MIN_PASSWORD, Member, store_member
 from app import database
+from zhiku.access import MIN_PASSWORD, Member, store_member
 
 
 def main():

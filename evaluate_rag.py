@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import re
 import sys
 import time
@@ -62,15 +63,34 @@ def score_retrieval(sources, labels, top_k):
     relevance = [any(matches(source, label) for label in labels) for source in sources]
     matched_labels = sum(any(matches(source, label) for source in sources) for label in labels)
     rank = next((rank for rank, relevant in enumerate(relevance, 1) if relevant), None)
+    covered = set()
+    dcg = 0.0
+    for position, source in enumerate(sources, 1):
+        label = next((index for index, item in enumerate(labels) if index not in covered and matches(source, item)), None)
+        if label is not None:
+            covered.add(label)
+            dcg += 1 / math.log2(position + 1)
+    ideal_dcg = sum(1 / math.log2(position + 1) for position in range(1, min(top_k, len(labels)) + 1))
     return {"first_hit_rank": rank, "hit": rank is not None,
             "precision_at_k": sum(relevance) / top_k, "evidence_recall_at_k": matched_labels / len(labels),
-            "reciprocal_rank": 1 / rank if rank else 0.0}
+            "reciprocal_rank": 1 / rank if rank else 0.0, "ndcg_at_k": dcg / ideal_dcg}
 
 
-def evaluate_case(case, top_k, answers, diagnose=False, export_ragas=False):
-    request = app.RetrievalQuery(text=case.question, top_k=top_k)
+def evaluate_case(case, top_k, answers, diagnose=False, export_ragas=False, *,
+                  rerank=False, adaptive=False, context_only=False):
+    request = app.RetrievalQuery(text=case.question, top_k=top_k, rerank=rerank, adaptive=adaptive)
+    prepared = adaptive or context_only
     started = time.perf_counter()
-    sources = app.retrieve(request)
+    try:
+        if prepared:
+            settings, query, context, sources = app.prepare_answer(request)
+        else:
+            sources = app.retrieve(request)
+    except HTTPException as error:
+        result = {"id": case.id, "question": case.question, "retrieval_error_status": error.status_code}
+        if answers:
+            result.update(answer_pass=None, answer_error_status=error.status_code)
+        return result
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     result = {
         "id": case.id, "question": case.question, "retrieval_ms": elapsed_ms,
@@ -78,12 +98,18 @@ def evaluate_case(case, top_k, answers, diagnose=False, export_ragas=False):
         **score_retrieval(sources, case.evidence, top_k),
     }
     if answers:
-        context, packed = app.pack_context(case.question, sources, request.context_tokens)
+        if prepared:
+            packed = sources
+        else:
+            query = case.question
+            context, packed = app.pack_context(query, sources, request.context_tokens)
         trace = {"generation_evidence": context} if diagnose else None
         if trace is not None:
             result["diagnostics"] = trace
         try:
-            answer = app.generate_answer(app.prompt_settings(), case.question, context, packed, diagnostics=trace)
+            if not prepared:
+                settings = app.prompt_settings()
+            answer = app.generate_answer(settings, query, context, packed, diagnostics=trace)
         except HTTPException as error:
             result.update(answer_pass=None, answer_error_status=error.status_code)
             retry = (error.headers or {}).get("Retry-After")
@@ -121,6 +147,9 @@ def run(args):
     if args.answers and any(case.evidence and not case.answer_contains for case in cases):
         raise ValueError("回答测试需要给所有正例标注 answer_contains。")
     export_ragas = bool(getattr(args, "export_ragas", None))
+    chunk_strategy = getattr(args, "chunk_strategy", "hierarchical")
+    rerank = getattr(args, "rerank", False)
+    adaptive = getattr(args, "adaptive", False)
     if export_ragas and any(case.evidence and not (case.reference or "").strip() for case in cases):
         raise ValueError("导出 RAGAS 输入需要给正例标注 reference。")
     if args.hybrid and app.EMBED_MODEL == "none":
@@ -142,8 +171,8 @@ def run(args):
     cases = [case for case in cases if case.id not in completed]
     data_root = args.files.resolve()
     previous = app.DATABASE, app.EMBED_MODEL, app.INDEX_MODEL, app.MODEL_REQUEST_INTERVAL
-    if args.answers and app.MODELSCOPE_TOKEN:
-        app.MODEL_REQUEST_INTERVAL = 3.0
+    if (args.answers or adaptive or args.hybrid) and app.MODELSCOPE_TOKEN:
+        app.MODEL_REQUEST_INTERVAL = max(app.MODEL_REQUEST_INTERVAL, 3.0)
     if not args.hybrid:
         app.EMBED_MODEL = app.INDEX_MODEL = "none"
     retry_from = None
@@ -157,14 +186,16 @@ def run(args):
                 if path.stat().st_size > app.MAX_UPLOAD:
                     raise ValueError(f"评估文件超过 20 MB：{name}")
                 try:
-                    app.index_file(name, path.read_bytes(), app.DocumentOptions(strategy="hierarchical"), None, None)
+                    app.index_file(name, path.read_bytes(), app.DocumentOptions(strategy=chunk_strategy), None, None)
                 except HTTPException as error:
                     raise ValueError(f"{name} 导入失败：{error.detail}") from error
             results = []
             for index, case in enumerate(cases):
-                result = evaluate_case(case, args.top_k, args.answers, getattr(args, "diagnose", False), export_ragas)
+                result = evaluate_case(case, args.top_k, args.answers, getattr(args, "diagnose", False), export_ragas,
+                                       rerank=rerank, adaptive=adaptive,
+                                       context_only=getattr(args, "context_only", False))
                 results.append(result)
-                if result.get("answer_error_status") == 429:
+                if 429 in (result.get("answer_error_status"), result.get("retrieval_error_status")):
                     retry_from = case.id
                     skipped.extend(item.id for item in cases[index + 1:])
                     break
@@ -172,31 +203,39 @@ def run(args):
         app.DATABASE, app.EMBED_MODEL, app.INDEX_MODEL, app.MODEL_REQUEST_INTERVAL = previous
     positives = [item for item in results if "hit" in item]
     negatives = [item for item in results if "empty_retrieval" in item]
+    durations = sorted(item["retrieval_ms"] for item in results if "retrieval_ms" in item)
     summary = {
         "positive_cases": len(positives), "negative_cases": len(negatives),
+        "retrieval_error_count": len(results) - len(durations),
         "hit_rate_at_k": mean(item["hit"] for item in positives) if positives else None,
         "precision_at_k": mean(item["precision_at_k"] for item in positives) if positives else None,
         "evidence_recall_at_k": mean(item["evidence_recall_at_k"] for item in positives) if positives else None,
         "mrr_at_k": mean(item["reciprocal_rank"] for item in positives) if positives else None,
+        "ndcg_at_k": mean(item["ndcg_at_k"] for item in positives) if positives else None,
         "negative_empty_count": sum(item["empty_retrieval"] for item in negatives),
-        "mean_retrieval_ms": round(mean(item["retrieval_ms"] for item in results), 2) if results else None,
+        "mean_retrieval_ms": round(mean(durations), 2) if durations else None,
+        "p95_retrieval_ms": durations[math.ceil(.95 * len(durations)) - 1] if durations else None,
     }
     if args.answers:
         summary["answer_pass_count"] = sum(item["answer_pass"] is True for item in results)
         summary["answer_scored_count"] = sum(item["answer_pass"] is not None for item in results)
         summary["answer_error_count"] = sum(item["answer_pass"] is None for item in results)
-    return {"retrieval": "hybrid" if args.hybrid else "bm25", "top_k": args.top_k,
-            "answer_checks": args.answers, "case_ids": case_ids, "skipped": skipped, "retry_from": retry_from,
+    return {"retrieval": "hybrid" if args.hybrid else "bm25", "top_k": args.top_k, "chunk_strategy": chunk_strategy,
+            "answer_checks": args.answers, "rerank": rerank, "adaptive": adaptive,
+            "case_ids": case_ids, "skipped": skipped, "retry_from": retry_from,
             "summary": summary, "cases": results}
 
 
 def main():
     parser = argparse.ArgumentParser(description="在临时知识库运行离线评估。默认只使用本地 BM25。")
     parser.add_argument("--dataset", type=Path, default=app.ROOT / "evaluation" / "baseline.json")
-    parser.add_argument("--files", type=Path, default=app.ROOT / "rag-test-samples")
+    parser.add_argument("--files", type=Path, default=app.ROOT / "evaluation" / "fixtures")
     parser.add_argument("--top-k", type=int, choices=range(1, 21), default=4)
+    parser.add_argument("--chunk-strategy", choices=("hierarchical", "parent_child"), default="hierarchical")
     parser.add_argument("--skip-ocr", action="store_true")
     parser.add_argument("--hybrid", action="store_true", help="使用项目配置的嵌入服务，可能消耗 API 额度。")
+    parser.add_argument("--rerank", action="store_true", help="使用已配置的重排服务。")
+    parser.add_argument("--adaptive", action="store_true", help="使用 Critic 和多轮检索，可能消耗 API 额度。")
     parser.add_argument("--answers", action="store_true", help="调用项目配置的回答和校验模型，可能消耗 API 额度。")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--from-case", help="从指定用例 ID 开始评估，知识库仍使用完整样本。")

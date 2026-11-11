@@ -1,0 +1,54 @@
+services:
+  app:
+    build: .
+    env_file:
+      - path: ${ZHIKU_DOCKER_ENV_FILE:-.env}
+        required: false
+    environment:
+      INKATLAS_DATABASE_PATH: /data/atlas.sqlite3
+      TESSDATA_PREFIX: /usr/share/tesseract-ocr/5/tessdata
+      INKATLAS_OLLAMA_URL: ${ZHIKU_DOCKER_OLLAMA_URL:-http://ollama:11434}
+      INKATLAS_RERANK_URL: ${ZHIKU_DOCKER_RERANK_URL:-http://reranker:80}
+    ports:
+      - "127.0.0.1:${ZHIKU_DOCKER_PORT:-8010}:8010"
+    volumes:
+      - zhiku-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8010/healthz', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  ollama:
+    image: ${ZHIKU_OLLAMA_IMAGE:-ollama/ollama:latest}
+    profiles: ["local"]
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ollama-models:
+    image: ${ZHIKU_OLLAMA_IMAGE:-ollama/ollama:latest}
+    profiles: ["local"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-ec", "ollama pull bge-m3 && ollama pull qwen2.5:3b"]
+
+  reranker:
+    image: ${ZHIKU_TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9}
+    profiles: ["rerank"]
+    command: ["--model-id", "${ZHIKU_TEI_MODEL:-BAAI/bge-reranker-base}"]
+    volumes:
+      - tei-data:/data
+
+volumes:
+  zhiku-data:
+  ollama-data:
+  tei-data:

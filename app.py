@@ -25,20 +25,23 @@ from fastapi import FastAPI, Form, HTTPException, Query, Request as HTTPRequest,
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, model_validator
 
-from access import (COOKIE, MEMBER_COOKIE, SESSION_AGE, Account, Actor, LoginCredentials, Member, ScopeName, accounts,
+from zhiku.access import (COOKIE, MEMBER_COOKIE, SESSION_AGE, Account, Actor, LoginCredentials, Member, ScopeName, accounts,
                     NewMember, Writer, authenticate, document_scope, issue_captcha, require_scope, same_origin,
                     sign_in_member, store_member)
-from audit import DocumentParseError, operational_alerts, record_answer, track
-from content_policy import blocked, load_rules, require_allowed
-from ingestion import Block, clean, parse_file, split_blocks
-from ingestion_jobs import JOB_COLUMNS, now_ms, public_job, run_worker
-from retrieval import dense_ranks, fuse, lexical_text
+from zhiku.agent.retrieval_loop import adaptive_retrieve
+from zhiku.agent.graph import run_assistant
+from zhiku.agent.tools.ticket import create_ticket, new_draft
+from zhiku.audit import DocumentParseError, operational_alerts, record_answer, track
+from zhiku.content_policy import blocked, load_rules, require_allowed
+from zhiku.ingestion import Block, clean, parent_child_chunks, parse_file, split_blocks
+from zhiku.ingestion_jobs import JOB_COLUMNS, now_ms, public_job, run_worker
+from zhiku.retrieval import dense_ranks, fuse, lexical_text
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env", override=False, encoding="utf-8-sig")
-DATABASE = ROOT / "atlas.sqlite3"
+DATABASE = Path(os.getenv("INKATLAS_DATABASE_PATH") or ROOT / "atlas.sqlite3")
 OLLAMA = os.getenv("INKATLAS_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 EMBED_API = os.getenv("INKATLAS_EMBED_API_URL", "").rstrip("/")
 MODELSCOPE_TOKEN = os.getenv("MODELSCOPE_API_KEY", "").strip()
@@ -77,7 +80,7 @@ class DocumentOptions(BaseModel):
     department: str = Field(default="", max_length=100)
     namespace: str = Field(default="default", pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     access_tags: list[str] = Field(default_factory=list, max_length=30)
-    strategy: Literal["fixed", "semantic", "hierarchical"] = "fixed"
+    strategy: Literal["fixed", "semantic", "hierarchical", "parent_child"] = "fixed"
     chunk_size: int = Field(default=700, ge=100, le=2000)
     overlap: int = Field(default=100, ge=0, lt=1000)
 
@@ -117,6 +120,8 @@ class RetrievalQuery(Question):
     history: list[str] = Field(default_factory=list, max_length=10)
     rerank: bool = False
     context_tokens: int = Field(default=4096, ge=512, le=16000)
+    adaptive: bool = False
+    max_rounds: int = Field(default=3, ge=1, le=3)
 
     @model_validator(mode="after")
     def valid_filters(self):
@@ -224,7 +229,7 @@ def embeddings(texts, tenant="default"):
 def database():
     connection = sqlite3.connect(DATABASE)
     try:
-        if connection.execute("PRAGMA user_version").fetchone()[0] < 9:
+        if connection.execute("PRAGMA user_version").fetchone()[0] < 11:
             with connection:
                 connection.execute("BEGIN IMMEDIATE")
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -331,7 +336,21 @@ def database():
                     """)
                     connection.execute("CREATE INDEX jobs_status_time ON ingestion_jobs(status, created_at)")
                     connection.execute("CREATE INDEX jobs_owner_time ON ingestion_jobs(tenant, owner, created_at DESC)")
-                    connection.execute("PRAGMA user_version = 9")
+                if version < 10:
+                    connection.execute("ALTER TABLE chunks ADD COLUMN chunk_role TEXT NOT NULL DEFAULT 'standalone'")
+                    connection.execute("ALTER TABLE chunks ADD COLUMN parent_position INTEGER")
+                if version < 11:
+                    connection.execute("""
+                        CREATE TABLE it_tickets (
+                            id TEXT PRIMARY KEY, tenant TEXT NOT NULL, owner TEXT NOT NULL, namespace TEXT NOT NULL,
+                            category TEXT NOT NULL, description TEXT NOT NULL, location TEXT NOT NULL,
+                            status TEXT NOT NULL CHECK (status IN ('draft', 'open')),
+                            expires_at INTEGER NOT NULL, submitted_at INTEGER
+                        )
+                    """)
+                    connection.execute("CREATE INDEX it_ticket_expiry ON it_tickets(status, expires_at)")
+                    connection.execute("ALTER TABLE audit_events ADD COLUMN resource_id TEXT")
+                    connection.execute("PRAGMA user_version = 11")
     except sqlite3.Error:
         connection.close()
         raise
@@ -340,7 +359,14 @@ def database():
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return (ROOT / "index.html").read_text(encoding="utf-8")
+    return (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/healthz")
+def health():
+    with closing(database()) as connection:
+        connection.execute("SELECT 1 FROM documents LIMIT 1").fetchone()
+    return {"status": "ok"}
 
 
 def session_info(account):
@@ -412,7 +438,7 @@ def create_member(member: NewMember, account: Actor):
 
 @app.get("/audit")
 def list_audit(account: Actor, response: Response, actor: str | None = Query(default=None, max_length=64),
-               action: Literal["ingest", "update", "offline", "question", "retrieve"] | None = None,
+               action: Literal["ingest", "update", "offline", "question", "retrieve", "ticket"] | None = None,
                after: datetime | None = None, before: datetime | None = None,
                limit: int = Query(default=50, ge=1, le=100),
                feedback: Literal["helpful", "unhelpful"] | None = None):
@@ -632,7 +658,7 @@ def index_document(identity, name, options, content_hash, blocks, account, *, re
         changed = previous is None or previous[0] != content_hash or not previous[2]
         version = previous[1] + int(changed) if previous else 1
         count = connection.execute(
-            "SELECT count(*) FROM chunks WHERE document = ? AND model = ?", (identity, INDEX_MODEL)
+            "SELECT count(*) FROM chunks WHERE document = ? AND model = ? AND chunk_role != 'child'", (identity, INDEX_MODEL)
         ).fetchone()[0]
         if changed or not count or rules:
             cleaned = clean_document(blocks, rules)
@@ -651,17 +677,25 @@ def index_document(identity, name, options, content_hash, blocks, account, *, re
         def embed(texts):
             return embeddings(texts, tenant) if tenant != "default" else embeddings(texts)
 
-        for chunk in split_blocks(cleaned, options.strategy, options.chunk_size, options.overlap, embed):
+        records = parent_child_chunks(cleaned, embed) if options.strategy == "parent_child" else (
+            (chunk, "standalone", None)
+            for chunk in split_blocks(cleaned, options.strategy, options.chunk_size, options.overlap, embed)
+        )
+        for record in records:
             if len(chunks) >= 10_000:
                 raise HTTPException(422, "超过 1 万个片段，请增大分块长度或拆分文档。")
-            chunks.append(chunk)
+            chunks.append(record)
         if not chunks:
             raise HTTPException(422, "文档没有可索引的正文。")
-        vectors = embed([chunk.text for chunk in chunks]) if EMBED_MODEL != "none" else [[]] * len(chunks)
-        tokens = [lexical_text(chunk.text) for chunk in chunks]
+        searchable = [chunk.text for chunk, role, _ in chunks if role != "parent"]
+        vectors = iter(embed(searchable) if EMBED_MODEL != "none" else [[]] * len(searchable))
+        tokens = iter(lexical_text(text) for text in searchable)
+        rows = [(chunk, role, parent, next(vectors) if role != "parent" else [],
+                 next(tokens) if role != "parent" else None) for chunk, role, parent in chunks]
         if progress:
             progress("saving")
-        result = {"id": identity, "version": version, "chunks": len(chunks), "already_indexed": False}
+        result = {"id": identity, "version": version,
+                  "chunks": sum(role != "child" for _, role, _ in chunks), "already_indexed": False}
         with connection:
             connection.execute("BEGIN IMMEDIATE")
             if document_state(connection, identity, account) != previous or (
@@ -682,12 +716,14 @@ def index_document(identity, name, options, content_hash, blocks, account, *, re
                 """, (identity, name, content_hash, version, options.source,
                       options.department, options.namespace, json.dumps(options.access_tags), document_type, original, tenant))
                 connection.execute("DELETE FROM chunks WHERE document = ?", (identity,))
-            for position, (chunk, vector, terms) in enumerate(zip(chunks, vectors, tokens)):
+            for position, (chunk, role, parent, vector, terms) in enumerate(rows):
                 inserted = connection.execute("""
-                    INSERT OR IGNORE INTO chunks (document, position, model, name, text, vector, location, kind)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (identity, position, INDEX_MODEL, name, chunk.text, json.dumps(vector), chunk.location, chunk.kind))
-                if inserted.rowcount:
+                    INSERT OR IGNORE INTO chunks (document, position, model, name, text, vector, location,
+                                                  kind, chunk_role, parent_position)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (identity, position, INDEX_MODEL, name, chunk.text, json.dumps(vector),
+                      chunk.location, chunk.kind, role, parent))
+                if inserted.rowcount and terms is not None:
                     connection.execute("INSERT INTO chunk_fts(rowid, tokens) VALUES (?, ?)", (inserted.lastrowid, terms))
             if complete:
                 complete(connection, result)
@@ -719,7 +755,8 @@ def list_documents(account: Actor, response: Response):
         rows = connection.execute(f"""
             SELECT d.id, d.name, d.version, d.active, d.uploaded_at, d.source, d.department,
                    d.namespace, d.access_tags, d.document_type, d.original IS NOT NULL AS has_original,
-                   (SELECT count(*) FROM chunks c WHERE c.document = d.id AND c.model = ?) AS indexed_chunks
+                   (SELECT count(*) FROM chunks c WHERE c.document = d.id AND c.model = ?
+                    AND c.chunk_role != 'child') AS indexed_chunks
             FROM documents d WHERE {scope} ORDER BY d.uploaded_at DESC, d.id
         """, (INDEX_MODEL, *values))
         return [dict(row) | {"access_tags": json.loads(row["access_tags"])} for row in rows]
@@ -1079,7 +1116,8 @@ def query_variants(request):
 
 def scoped_rows(connection, request, lexical_queries, limit, account):
     scope, scope_values = document_scope(account)
-    where = ["c.model = ?", "d.active = 1", "d.namespace = ?", "length(trim(c.text)) >= ?",
+    where = ["c.model = ?", "d.active = 1", "d.namespace = ?", "length(trim(COALESCE(p.text, c.text))) >= ?",
+             "c.chunk_role != 'parent'", "(c.chunk_role != 'child' OR p.rowid IS NOT NULL)",
              """NOT EXISTS (
                  SELECT 1 FROM json_each(d.access_tags) AS required
                  WHERE required.value NOT IN (SELECT value FROM json_each(?))
@@ -1089,7 +1127,9 @@ def scoped_rows(connection, request, lexical_queries, limit, account):
     rules = load_rules()
     if rules:
         connection.create_function("blocked_text", 1, lambda value: blocked(rules, value), deterministic=True)
-        where.extend(f"NOT blocked_text({column})" for column in ("c.text", "d.name", "d.source", "d.department"))
+        where.extend(f"NOT blocked_text({column})" for column in (
+            "COALESCE(p.text, c.text)", "d.name", "d.source", "d.department"
+        ))
     for column in ("department", "document_type"):
         value = getattr(request, column)
         if value is not None:
@@ -1099,14 +1139,22 @@ def scoped_rows(connection, request, lexical_queries, limit, account):
         if timestamp:
             where.append(f"d.uploaded_at {operator} ?")
             values.append(timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f").rstrip("0").rstrip("."))
-    relation = "chunks c JOIN documents d ON d.id = c.document"
+    joins = """JOIN documents d ON d.id = c.document
+               LEFT JOIN chunks p ON p.document = c.document AND p.model = c.model
+                   AND p.position = c.parent_position AND p.chunk_role = 'parent'"""
     predicate = " AND ".join(where)
     rows = connection.execute(f"""
-        SELECT c.rowid, c.name, c.position, c.text, c.vector, c.location, c.kind, d.id, d.version,
+        SELECT c.rowid, COALESCE(p.rowid, c.rowid) AS evidence_id, c.name, c.vector,
+               COALESCE(p.position, c.position) AS position, COALESCE(p.text, c.text) AS text,
+               COALESCE(p.location, c.location) AS location, COALESCE(p.kind, c.kind) AS kind,
+               COALESCE(p.chunk_role, c.chunk_role) AS chunk_role,
+               d.id, d.version,
                d.source, d.uploaded_at, d.document_type, d.department, d.namespace, d.access_tags,
                d.original IS NOT NULL AS has_original
-        FROM {relation} WHERE {predicate} ORDER BY c.document, c.position
+        FROM chunks c {joins} WHERE {predicate} ORDER BY c.document, c.position
     """, values).fetchall()
+    if any(row["evidence_id"] != row["rowid"] for row in rows):
+        limit *= 5
     rankings = []
     for text in lexical_queries:
         terms = list(dict.fromkeys(lexical_text(text).split()))[:32]
@@ -1115,7 +1163,7 @@ def scoped_rows(connection, request, lexical_queries, limit, account):
         expression = " OR ".join(f'"{term}"' for term in terms)
         ranked = connection.execute(f"""
             SELECT c.rowid FROM chunk_fts JOIN chunks c ON c.rowid = chunk_fts.rowid
-            JOIN documents d ON d.id = c.document
+            {joins}
             WHERE chunk_fts MATCH ? AND {predicate}
             ORDER BY bm25(chunk_fts), c.document, c.position LIMIT ?
         """, (expression, *values, limit))
@@ -1144,7 +1192,7 @@ def rerank(query, rows):
 
 def source_for(row, index):
     base = f"/documents/{row['id']}/versions/{row['version']}"
-    source = {key: row[key] for key in ("name", "text", "version", "source", "location", "kind",
+    source = {key: row[key] for key in ("name", "text", "version", "source", "location", "kind", "chunk_role",
                                         "document_type", "uploaded_at", "department", "namespace")}
     source.update(id=f"S{index}", document_id=row["id"], chunk=row["position"] + 1,
                   url=f"{base}/chunks/{row['position'] + 1}", access_tags=json.loads(row["access_tags"]))
@@ -1171,9 +1219,12 @@ def retrieve(request, variants=None, account=None):
         dense = []
     else:
         vectors = embeddings(vectors_text, account.tenant) if account and account.tenant != "default" else embeddings(vectors_text)
-        dense = dense_ranks(rows, vectors, limit)
+        depth = limit * 5 if any(row["evidence_id"] != row["rowid"] for row in rows) else limit
+        dense = dense_ranks(rows, vectors, depth)
     by_id = {row["rowid"]: row for row in rows}
-    candidates = [by_id[key] for key in fuse(dense + lexical, limit)]
+    evidence = {row["evidence_id"]: row for row in rows}
+    rankings = [list(dict.fromkeys(by_id[key]["evidence_id"] for key in ranking)) for ranking in dense + lexical]
+    candidates = [evidence[key] for key in fuse(rankings, limit)]
     if request.rerank and candidates:
         candidates = rerank("；".join(vectors_text[:2]) if request.history and request.strategy != "hyde"
                             else request.text.strip(), candidates)
@@ -1242,7 +1293,7 @@ def pack_context(query, sources, budget):
     for source in sources:
         text = source["text"]
         paragraphs = re.split(r"(?<=[。！？!?])|\n+", text)
-        if len(text.encode()) > 960 and len(paragraphs) > 1:
+        if source.get("chunk_role") != "parent" and len(text.encode()) > 960 and len(paragraphs) > 1:
             ranked = sorted(enumerate(paragraphs), key=lambda item: -len(terms.intersection(lexical_text(item[1]).split())))
             chosen = sorted(ranked[:4])
             text = "\n".join(part for _, part in chosen if part.strip()) or text
@@ -1265,15 +1316,30 @@ def pack_context(query, sources, budget):
     return context, packed
 
 
-def prepare_answer(question, account=None):
+def prepare_answer(question, account=None, retrieval_info=None):
     require_scope(account, question.namespace, question.access_tags)
     settings = prompt_settings()
     variants = query_variants(question)
-    sources = retrieve(question, variants, account)
     query = question.text.strip()
     if question.history and question.strategy != "hyde" and len(variants[0]) > 1:
         query += "\n结合历史的检索问句：" + variants[0][1]
-    context, sources = pack_context(query, sources, question.context_tokens)
+    if question.adaptive:
+        def lookup(refined):
+            if refined == question.text.strip():
+                return retrieve(question, variants, account)
+            updated = question.model_copy(update={"text": refined, "history": [], "strategy": "none"})
+            return retrieve(updated, ([refined], [refined]), account)
+
+        context, sources, info = adaptive_retrieve(
+            query, question.text.strip(), lookup,
+            lambda items: pack_context(query, items, question.context_tokens), structured_chat,
+            top_k=question.top_k, max_rounds=question.max_rounds,
+        )
+        if retrieval_info is not None:
+            retrieval_info.update(info)
+    else:
+        sources = retrieve(question, variants, account)
+        context, sources = pack_context(query, sources, question.context_tokens)
     return settings, query, context, sources
 
 
@@ -1329,10 +1395,48 @@ def generate_answer(settings, query, context, sources, diagnostics=None):
 
 @app.post("/questions")
 def ask(question: RetrievalQuery, account: Actor):
+    retrieval_info = {}
     with track(database, account, "question", question.namespace) as entry:
-        result = generate_answer(*prepare_answer(question, account))
+        result = generate_answer(*prepare_answer(question, account, retrieval_info))
         record_answer(entry, result)
-    return result | {"feedback_id": entry.get("event_id")}
+    response = result | {"feedback_id": entry.get("event_id")}
+    return response | {"retrieval": retrieval_info} if retrieval_info else response
+
+
+@app.post("/agent/chat")
+def assistant_chat(question: RetrievalQuery, account: Actor, response: Response):
+    require_scope(account, question.namespace, question.access_tags)
+    response.headers["Cache-Control"] = "no-store"
+
+    def retrieve_policy():
+        lookup = question.model_copy(update={"text": question.text[:1970] + "\n住宿报销 每晚上限"})
+        _, _, context, sources = prepare_answer(lookup, account)
+        return context, sources
+
+    def draft(fields):
+        with closing(database()) as connection, connection:
+            return new_draft(connection, *job_owner(account), question.namespace, fields)
+
+    return run_assistant(question.text, structured_chat, lambda: ask(question, account), retrieve_policy, draft)
+
+
+class TicketConfirmation(BaseModel):
+    confirmed: StrictBool
+
+
+@app.post("/agent/tickets/{draft_id}/confirm")
+def confirm_ticket(draft_id: str, confirmation: TicketConfirmation, account: Actor, response: Response):
+    if not confirmation.confirmed:
+        raise HTTPException(422, "请先核对并确认工单内容。")
+    if not re.fullmatch(r"[0-9a-f]{24}", draft_id):
+        raise HTTPException(404, "找不到该工单草稿。")
+    response.headers["Cache-Control"] = "no-store"
+    with track(database, account, "ticket", None) as entry:
+        with closing(database()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            result = create_ticket(connection, draft_id, *job_owner(account), account)
+        entry.update(resource_id=result["ticket_id"], namespace=result["namespace"])
+    return result
 
 
 def event(name, data):
@@ -1346,14 +1450,18 @@ def stream_answer(question: RetrievalQuery, account: Actor):
         try:
             with track(database, account, "question", question.namespace) as entry:
                 yield event("status", {"stage": "retrieval"})
-                prepared = prepare_answer(question, account)
+                retrieval_info = {}
+                prepared = prepare_answer(question, account, retrieval_info)
                 yield event("status", {"stage": "generation_and_verification"})
                 result = generate_answer(*prepared)
                 record_answer(entry, result)
             for start in range(0, len(result["answer"]), 64):
                 yield event("delta", {"text": result["answer"][start:start + 64]})
-            yield event("done", {"sources": result["sources"], "verification": result["verification"],
-                                 "feedback_id": entry.get("event_id")})
+            done = {"sources": result["sources"], "verification": result["verification"],
+                    "feedback_id": entry.get("event_id")}
+            if retrieval_info:
+                done["retrieval"] = retrieval_info
+            yield event("done", done)
         except HTTPException as error:
             yield event("error", {"status": error.status_code, "detail": error.detail})
 
